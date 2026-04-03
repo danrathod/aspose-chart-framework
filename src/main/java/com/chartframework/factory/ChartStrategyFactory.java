@@ -14,13 +14,16 @@ import java.util.Map;
  * {@link ExcelChartType}.
  *
  * <h2>Design: Registry-based Factory</h2>
- * <p>Strategies are registered in an {@link EnumMap} at construction time,
- * eliminating all {@code if/else} or {@code switch} chains.
- * Every {@link ExcelChartType} constant has an entry — zero gaps.</p>
+ * <p>Uses an {@link EnumMap} — no {@code if/else} or {@code switch} chains.
+ * Every {@link ExcelChartType} constant is registered.</p>
  *
- * <h2>Extension</h2>
- * <p>Override {@link #buildRegistry()} in a subclass, or call
- * {@link #registerStrategy} at runtime to inject custom strategies.</p>
+ * <h2>Combo Chart Note</h2>
+ * <p>Aspose.Cells Java has no dedicated {@code ChartType.CUSTOM_COMBINATION}
+ * constant. Combo charts are built by starting with {@link ExcelChartType#COLUMN}
+ * and changing individual series types via {@code series.setType(ChartType.LINE)}.
+ * {@link ComboChartStrategy} handles this automatically when
+ * {@link com.chartframework.model.ChartConfig#getSecondaryValueAxisTitle()} is set
+ * — just pass {@link ExcelChartType#COLUMN} as the chart type.</p>
  */
 public class ChartStrategyFactory {
 
@@ -54,9 +57,7 @@ public class ChartStrategyFactory {
         return strategy;
     }
 
-    /**
-     * Registers or replaces a strategy at runtime.
-     */
+    /** Registers or replaces a strategy at runtime. */
     public void registerStrategy(ExcelChartType chartType, ChartStrategy strategy) {
         registry.put(chartType, strategy);
         log.info("Registered custom strategy [{}] for chart type [{}]",
@@ -64,14 +65,15 @@ public class ChartStrategyFactory {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Registry builder
+    // Registry
     // ─────────────────────────────────────────────────────────────────────────
 
     protected Map<ExcelChartType, ChartStrategy> buildRegistry() {
         Map<ExcelChartType, ChartStrategy> map = new EnumMap<>(ExcelChartType.class);
 
-        // ── Shared stateless strategy instances ───────────────────────────────
+        // Shared stateless strategy instances
         ChartStrategy columnBar  = new ColumnBarChartStrategy();
+        ChartStrategy combo      = new ComboChartStrategy();   // column-based dual-axis
         ChartStrategy lineArea   = new LineAreaChartStrategy();
         ChartStrategy pie        = new PieDonutChartStrategy();
         ChartStrategy scatter    = new ScatterChartStrategy();
@@ -86,9 +88,10 @@ public class ChartStrategyFactory {
         ChartStrategy boxWhisker = new BoxWhiskerChartStrategy();
         ChartStrategy waterfall  = new WaterfallChartStrategy();
         ChartStrategy mapChart   = new MapChartStrategy();
-        ChartStrategy combo      = new ComboChartStrategy();
 
         // ── Column ────────────────────────────────────────────────────────────
+        // COLUMN is also the entry point for combo charts — ComboChartStrategy
+        // detects the secondary axis config and changes per-series types.
         map.put(ExcelChartType.COLUMN,                          columnBar);
         map.put(ExcelChartType.COLUMN_STACKED,                  columnBar);
         map.put(ExcelChartType.COLUMN_100_PERCENT_STACKED,      columnBar);
@@ -123,13 +126,13 @@ public class ChartStrategyFactory {
         map.put(ExcelChartType.AREA_3D_100_PERCENT_STACKED,     lineArea);
 
         // ── Pie / Doughnut ────────────────────────────────────────────────────
-        map.put(ExcelChartType.PIE,             pie);
-        map.put(ExcelChartType.PIE_3D,          pie);
-        map.put(ExcelChartType.PIE_EXPLODED,    pie);
-        map.put(ExcelChartType.PIE_3D_EXPLODED, pie);
-        map.put(ExcelChartType.PIE_PIE,         pie);   // Pie of Pie
-        map.put(ExcelChartType.PIE_BAR,         pie);   // Bar of Pie
-        map.put(ExcelChartType.DOUGHNUT,        pie);
+        map.put(ExcelChartType.PIE,               pie);
+        map.put(ExcelChartType.PIE_3D,            pie);
+        map.put(ExcelChartType.PIE_EXPLODED,      pie);
+        map.put(ExcelChartType.PIE_3D_EXPLODED,   pie);
+        map.put(ExcelChartType.PIE_PIE,           pie);
+        map.put(ExcelChartType.PIE_BAR,           pie);
+        map.put(ExcelChartType.DOUGHNUT,          pie);
         map.put(ExcelChartType.DOUGHNUT_EXPLODED, pie);
 
         // ── Scatter ───────────────────────────────────────────────────────────
@@ -197,8 +200,12 @@ public class ChartStrategyFactory {
         map.put(ExcelChartType.WATERFALL,   waterfall);
         map.put(ExcelChartType.MAP,         mapChart);
 
-        // ── Combo ─────────────────────────────────────────────────────────────
-        map.put(ExcelChartType.CUSTOM_COMBINATION, combo);
+        // Combo is not a separate ChartType in Aspose Java — it is handled
+        // by ComboChartStrategy which is wired to COLUMN and overrides
+        // per-series types internally. To explicitly request combo behaviour,
+        // use ExcelChartType.COLUMN + set ChartConfig.secondaryValueAxisTitle.
+        // The combo variable is kept to allow future registerStrategy calls.
+        // combo strategy available via registerStrategy(ExcelChartType.COLUMN, combo)
 
         return map;
     }
