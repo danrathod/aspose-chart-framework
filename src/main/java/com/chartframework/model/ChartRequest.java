@@ -9,22 +9,23 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Primary public API input DTO — carries everything the framework needs
- * to generate a single chart in a given Excel file.
+ * Chart-specific request DTO — describes a single chart to be generated.
  *
- * <h2>Key Design</h2>
- * <p>The caller passes a <b>file path</b> to an existing {@code .xlsx} file
- * (or a path where a new file should be created). The framework loads / creates
- * the Workbook internally, so <b>consumers do not need Aspose.Cells on their
- * classpath</b>. After chart generation the workbook is saved to
- * {@link #outputFilePath} (or back to {@link #inputFilePath} when no separate
- * output path is given).</p>
+ * <h2>Role within the API</h2>
+ * <p>A {@code ChartRequest} is always contained inside a
+ * {@link ChartBatchRequest}, which carries the Excel file paths. This means
+ * {@code ChartRequest} is purely about <em>what</em> chart to draw and
+ * <em>where</em> to draw it — with no file I/O concerns.</p>
  *
- * <h2>Usage Example</h2>
+ * <h2>Data Layout Convention</h2>
+ * <ul>
+ *   <li><b>Row 0</b> — header row: first cell ignored; remaining = series names.</li>
+ *   <li><b>Row 1..N</b> — data rows: first cell = category label; rest = values.</li>
+ * </ul>
+ *
+ * <h2>Usage (always inside a ChartBatchRequest)</h2>
  * <pre>{@code
- * ChartRequest request = ChartRequest.builder()
- *     .inputFilePath("reports/dashboard.xlsx")
- *     .outputFilePath("reports/dashboard_out.xlsx")  // optional
+ * ChartRequest chart = ChartRequest.builder()
  *     .targetSheetName("Dashboard")
  *     .chartType(ExcelChartType.COLUMN)
  *     .placement(ChartPlacement.of(2, 0, 20, 8))
@@ -34,49 +35,21 @@ import java.util.List;
  *         List.of("Feb",   15000,   4500)
  *     ))
  *     .config(ChartConfig.builder()
- *         .chartTitle("Monthly Performance")
+ *         .chartTitle("Monthly Sales")
  *         .showLegend(true)
  *         .build())
  *     .build();
  * }</pre>
- *
- * <h2>Data Layout Convention</h2>
- * <ul>
- *   <li><b>Row 0</b>  — header: first cell ignored; remaining cells = series names.</li>
- *   <li><b>Row 1..N</b> — data: first cell = category label; rest = numeric values.</li>
- * </ul>
  */
 @Value
 @Builder
 public class ChartRequest {
 
-    // ── File paths ────────────────────────────────────────────────────────────
-
-    /**
-     * Path to the input Excel file ({@code .xlsx}).
-     * <ul>
-     *   <li>If the file <b>exists</b> it is loaded as the workbook.</li>
-     *   <li>If the file does <b>not exist</b>, a new blank workbook is created
-     *       and saved to this path (or to {@link #outputFilePath}) after chart
-     *       generation.</li>
-     * </ul>
-     * Must not be {@code null} or blank.
-     */
-    String inputFilePath;
-
-    /**
-     * Path where the modified workbook will be saved after chart creation.
-     * <p>When {@code null} or blank the workbook is saved back to
-     * {@link #inputFilePath} (in-place update).</p>
-     */
-    String outputFilePath;
-
     // ── Chart identity ────────────────────────────────────────────────────────
 
     /**
      * Name of the <em>visible</em> worksheet where the chart should be placed.
-     * If the sheet does not yet exist, it will be created automatically by
-     * {@link com.chartframework.service.ChartService}.
+     * The sheet is created automatically if it does not exist.
      */
     String targetSheetName;
 
@@ -90,8 +63,8 @@ public class ChartRequest {
 
     /**
      * Chart data as a 2-D list of {@code Object} values.
-     * String, Number (Integer/Long/Double), Boolean, and java.util.Date values
-     * are all handled correctly when writing to the hidden data sheet.
+     * Supported value types: String, Number (Integer/Long/Double/BigDecimal),
+     * Boolean, java.util.Date.
      */
     List<List<Object>> data;
 
@@ -103,13 +76,6 @@ public class ChartRequest {
      */
     ChartConfig config;
 
-    /**
-     * Optional preferred base-name for the hidden data sheet.
-     * A numeric suffix is always appended to guarantee uniqueness.
-     * When {@code null} the framework uses {@code __chartdata_} as the prefix.
-     */
-    String preferredHiddenSheetBaseName;
-
     // ── Convenience helpers ───────────────────────────────────────────────────
 
     /** Returns the effective config, falling back to defaults when {@code null}. */
@@ -118,13 +84,16 @@ public class ChartRequest {
     }
 
     /**
-     * Resolves the save path: uses {@link #outputFilePath} when set,
-     * otherwise falls back to {@link #inputFilePath}.
+     * Derives a human-readable label for this chart used as the title row
+     * written above the data block in the hidden sheet.
+     * Priority: chartTitle from config → chartType display name.
      */
-    public String effectiveOutputPath() {
-        return (outputFilePath != null && !outputFilePath.isBlank())
-                ? outputFilePath
-                : inputFilePath;
+    public String deriveLabel() {
+        ChartConfig cfg = effectiveConfig();
+        if (cfg.getChartTitle() != null && !cfg.getChartTitle().isBlank()) {
+            return "■ " + cfg.getChartTitle() + "  [" + chartType.getDisplayName() + "]";
+        }
+        return "■ " + chartType.getDisplayName();
     }
 
     /**

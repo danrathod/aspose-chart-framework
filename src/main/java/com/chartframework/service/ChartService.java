@@ -1,5 +1,6 @@
 package com.chartframework.service;
 
+import com.aspose.cells.Chart;
 import com.aspose.cells.Workbook;
 import com.aspose.cells.Worksheet;
 import com.aspose.cells.WorksheetCollection;
@@ -7,6 +8,7 @@ import com.chartframework.builder.ChartBuilder;
 import com.chartframework.exception.ChartFrameworkException;
 import com.chartframework.factory.ChartStrategyFactory;
 import com.chartframework.manager.HiddenSheetManager;
+import com.chartframework.model.ChartBatchRequest;
 import com.chartframework.model.ChartRequest;
 import com.chartframework.model.DataRange;
 import com.chartframework.strategy.ChartStrategy;
@@ -15,55 +17,65 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
+import java.util.List;
 
 /**
- * Primary orchestration layer — the single public API entry point for the
- * chart generation framework.
+ * Primary orchestration layer — the single public API entry point.
  *
- * <h2>Consumer-Friendly Design</h2>
- * <p>Consumers pass an Excel <b>file path</b> (not a Workbook). The framework
- * handles all Aspose.Cells interactions internally:</p>
- * <ol>
- *   <li>Loads the workbook from {@link ChartRequest#getInputFilePath()}
- *       (creates a blank workbook if the file does not exist).</li>
- *   <li>Ensures the target sheet exists (creates it if absent).</li>
- *   <li>Writes chart data into a hidden sheet.</li>
- *   <li>Creates and configures the chart.</li>
- *   <li>Saves the workbook to {@link ChartRequest#effectiveOutputPath()}.</li>
- * </ol>
- * <p>Consumers therefore have <b>zero dependency on Aspose.Cells</b> in their
- * own code — they only interact with the framework's public model classes.</p>
+ * <h2>Primary API: {@link #createCharts(ChartBatchRequest)}</h2>
+ * <p>Accepts a {@link ChartBatchRequest} containing one input file path and
+ * <em>multiple</em> {@link ChartRequest}s. The workbook is loaded once,
+ * all charts are generated, and the file is saved once.</p>
  *
- * <h2>Orchestration Flow</h2>
+ * <h2>Convenience API: {@link #createChart(String, String, ChartRequest)}</h2>
+ * <p>Thin wrapper around {@link #createCharts} for the single-chart use case.</p>
+ *
+ * <h2>Hidden Sheet Strategy</h2>
+ * <p>All charts in a single batch share the same hidden data sheet.
+ * Each chart's data block is preceded by a bold title label row and followed
+ * by 2 blank separator rows. A new hidden sheet is created only when the
+ * next block would exceed the row threshold
+ * (Excel max − {@link HiddenSheetManager#ROW_BUFFER}).</p>
+ *
+ * <h2>Pipeline per batch</h2>
  * <pre>
- *   createChart(request)
+ *   createCharts(batchRequest)
  *       │
- *       ├─1─ ChartRequestValidator     → validate all inputs (fail fast)
- *       ├─2─ WorkbookLoader            → load/create Workbook from file path
- *       ├─3─ SheetEnsurer              → create target sheet if absent
- *       ├─4─ HiddenSheetManager        → write data to new hidden sheet
- *       ├─5─ ChartBuilder              → create &amp; position Chart object
- *       ├─6─ ChartStrategyFactory      → resolve ChartStrategy
- *       ├─7─ ChartStrategy             → configure series, axes, legend
- *       └─8─ WorkbookSaver             → save workbook to output path
+ *       ├─1─ ChartRequestValidator        → validate batch + all individual charts
+ *       ├─2─ WorkbookLoader               → load / create Workbook from file path
+ *       ├─3─ SheetEnsurer                 → create target sheets that don't exist
+ *       ├─4─ HiddenSheetManager           → write ALL charts' data sequentially
+ *       │                                    returns List&lt;DataRange&gt; (one per chart)
+ *       ├─5─ For each chart:
+ *       │       ChartBuilder              → create &amp; position Chart object
+ *       │       ChartStrategyFactory      → resolve ChartStrategy
+ *       │       ChartStrategy.configure() → add series, axes, legend, labels
+ *       └─6─ WorkbookSaver               → save workbook to effectiveOutputPath
  * </pre>
  *
  * <h2>Usage Example</h2>
  * <pre>{@code
  * ChartService service = ChartService.create();
  *
- * service.createChart(ChartRequest.builder()
+ * String savedPath = service.createCharts(ChartBatchRequest.builder()
  *     .inputFilePath("reports/dashboard.xlsx")
- *     .targetSheetName("Dashboard")
- *     .chartType(ExcelChartType.COLUMN)
- *     .placement(ChartPlacement.of(2, 0, 20, 8))
- *     .data(salesData)
- *     .config(ChartConfig.builder()
- *         .chartTitle("Q1 Sales")
- *         .showLegend(true)
- *         .build())
+ *     .charts(List.of(
+ *         ChartRequest.builder()
+ *             .targetSheetName("Dashboard")
+ *             .chartType(ExcelChartType.COLUMN)
+ *             .placement(ChartPlacement.of(0, 0, 18, 8))
+ *             .data(salesData)
+ *             .config(ChartConfig.builder().chartTitle("Monthly Sales").build())
+ *             .build(),
+ *         ChartRequest.builder()
+ *             .targetSheetName("Dashboard")
+ *             .chartType(ExcelChartType.PIE)
+ *             .placement(ChartPlacement.of(19, 0, 37, 8))
+ *             .data(regionData)
+ *             .config(ChartConfig.builder().chartTitle("Regional Revenue").build())
+ *             .build()
+ *     ))
  *     .build());
- * // Workbook saved automatically to "reports/dashboard.xlsx"
  * }</pre>
  */
 public class ChartService {
@@ -80,20 +92,17 @@ public class ChartService {
     // ─────────────────────────────────────────────────────────────────────────
 
     /** Full constructor for dependency injection. */
-    public ChartService(ChartRequestValidator  validator,
-                        HiddenSheetManager     hiddenSheetManager,
-                        ChartBuilder           chartBuilder,
-                        ChartStrategyFactory   strategyFactory) {
+    public ChartService(ChartRequestValidator validator,
+                        HiddenSheetManager    hiddenSheetManager,
+                        ChartBuilder          chartBuilder,
+                        ChartStrategyFactory  strategyFactory) {
         this.validator          = validator;
         this.hiddenSheetManager = hiddenSheetManager;
         this.chartBuilder       = chartBuilder;
         this.strategyFactory    = strategyFactory;
     }
 
-    /**
-     * Convenience factory — creates a fully wired {@link ChartService} with
-     * default collaborators. Suitable for use outside a DI container.
-     */
+    /** Convenience factory — creates a fully wired service with default collaborators. */
     public static ChartService create() {
         return new ChartService(
                 new ChartRequestValidator(),
@@ -104,79 +113,96 @@ public class ChartService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Public API
+    // Primary public API
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Creates a chart in the Excel file specified by the request.
+     * Creates multiple charts in a single Excel file from one batch request.
      *
-     * <p>The method:</p>
-     * <ol>
-     *   <li>Validates the request.</li>
-     *   <li>Loads (or creates) the workbook from {@link ChartRequest#getInputFilePath()}.</li>
-     *   <li>Ensures the target sheet exists, creating it if necessary.</li>
-     *   <li>Writes chart data into a new hidden sheet.</li>
-     *   <li>Creates and fully configures the chart.</li>
-     *   <li>Saves the workbook to {@link ChartRequest#effectiveOutputPath()}.</li>
-     * </ol>
+     * <p>The workbook is loaded once, all charts are generated, and the file
+     * is saved once. All chart data is written to a shared hidden sheet
+     * (with overflow to additional hidden sheets only when the row threshold
+     * is reached).</p>
      *
-     * @param request Fully populated {@link ChartRequest}.
-     * @return The output file path where the workbook was saved.
-     * @throws com.chartframework.exception.ChartValidationException if validation fails.
-     * @throws com.chartframework.exception.ChartFrameworkException  for all other errors.
+     * @param batchRequest Batch containing the input file path and all chart requests.
+     * @return The path where the workbook was saved.
+     * @throws com.chartframework.exception.ChartValidationException  on validation failures.
+     * @throws com.chartframework.exception.ChartFrameworkException   on Aspose-level errors.
      */
-    public String createChart(ChartRequest request) {
-        log.info("▶ createChart() — type=[{}], sheet=[{}], input=[{}]",
-                request != null ? request.getChartType() : "null",
-                request != null ? request.getTargetSheetName() : "null",
-                request != null ? request.getInputFilePath() : "null");
+    public String createCharts(ChartBatchRequest batchRequest) {
+        log.info("▶ createCharts() — {} chart(s), input='{}'",
+                batchRequest != null && batchRequest.getCharts() != null
+                        ? batchRequest.getCharts().size() : 0,
+                batchRequest != null ? batchRequest.getInputFilePath() : "null");
 
-        // Step 1 — Validate
-        validator.validate(request);
+        // Step 1 — Validate entire batch
+        validator.validate(batchRequest);
 
-        // Step 2 — Load or create workbook
-        Workbook workbook = loadOrCreate(request.getInputFilePath());
+        List<ChartRequest> charts = batchRequest.getCharts();
 
-        // Step 3 — Ensure target sheet exists
-        ensureSheetExists(workbook, request.getTargetSheetName());
+        // Step 2 — Load or create workbook (once for the whole batch)
+        Workbook workbook = loadOrCreate(batchRequest.getInputFilePath());
 
-        // Step 4 — Write data to hidden sheet
-        DataRange dataRange = hiddenSheetManager.writeData(request, workbook);
+        // Step 3 — Ensure all target sheets exist (create any that are missing)
+        charts.forEach(chart -> ensureSheetExists(workbook, chart.getTargetSheetName()));
 
-        // Step 5 — Create & position chart in target sheet
-        com.aspose.cells.Chart chart = chartBuilder.buildChart(request, workbook);
+        // Step 4 — Write ALL charts' data sequentially into shared hidden sheet(s)
+        List<DataRange> dataRanges = hiddenSheetManager.writeDataForBatch(batchRequest, workbook);
 
-        // Step 6 — Resolve strategy
-        ChartStrategy strategy = strategyFactory.getStrategy(request.getChartType());
+        // Step 5 — Create and configure each chart using its corresponding DataRange
+        for (int i = 0; i < charts.size(); i++) {
+            ChartRequest chart     = charts.get(i);
+            DataRange    dataRange = dataRanges.get(i);
 
-        // Step 7 — Configure series, axes, labels, legend
-        strategy.configure(chart, request, dataRange);
+            log.debug("Configuring chart[{}]: type={}, sheet='{}'",
+                    i, chart.getChartType().getDisplayName(), chart.getTargetSheetName());
 
-        // Recalculate chart formulas (non-fatal if it warns)
-        try {
-            chart.calculate();
-        } catch (Exception e) {
-            log.warn("Chart calculation warning (non-fatal): {}", e.getMessage());
+            // Create & position the Chart object in the target visible sheet
+            Chart asposeChart = chartBuilder.buildChart(chart, workbook);
+
+            // Resolve strategy and configure series / axes / legend / labels
+            ChartStrategy strategy = strategyFactory.getStrategy(chart.getChartType());
+            strategy.configure(asposeChart, chart, dataRange);
+
+            // Trigger formula recalculation (non-fatal if it warns)
+            try {
+                asposeChart.calculate();
+            } catch (Exception e) {
+                log.warn("Chart[{}] calculation warning (non-fatal): {}", i, e.getMessage());
+            }
         }
 
-        // Step 8 — Save workbook
-        String outputPath = request.effectiveOutputPath();
+        // Step 6 — Save workbook once, after all charts are created
+        String outputPath = batchRequest.effectiveOutputPath();
         saveWorkbook(workbook, outputPath);
 
-        log.info("✔ Chart [{}] created and saved to '{}'",
-                request.getChartType().getDisplayName(), outputPath);
-
+        log.info("✔ {} chart(s) created and saved to '{}'", charts.size(), outputPath);
         return outputPath;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Convenience API (single chart)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Convenience method for creating a single chart.
+     * Delegates to {@link #createCharts(ChartBatchRequest)}.
+     *
+     * @param inputFilePath  Path to the input Excel file.
+     * @param outputFilePath Save path (null = in-place update of inputFilePath).
+     * @param chart          The single chart request.
+     * @return The path where the workbook was saved.
+     */
+    public String createChart(String inputFilePath,
+                              String outputFilePath,
+                              ChartRequest chart) {
+        return createCharts(ChartBatchRequest.singleChart(inputFilePath, outputFilePath, chart));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Private helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Loads an existing workbook from the given path, or creates a fresh blank
-     * workbook if the file does not exist.
-     */
     private Workbook loadOrCreate(String filePath) {
         try {
             File file = new File(filePath);
@@ -184,8 +210,7 @@ public class ChartService {
                 log.debug("Loading existing workbook from '{}'", filePath);
                 return new Workbook(filePath);
             } else {
-                log.debug("File '{}' not found — creating a new blank workbook.", filePath);
-                // Ensure parent directories exist
+                log.debug("'{}' not found — creating a new blank workbook.", filePath);
                 File parent = file.getParentFile();
                 if (parent != null && !parent.exists()) {
                     parent.mkdirs();
@@ -198,23 +223,14 @@ public class ChartService {
         }
     }
 
-    /**
-     * Ensures a worksheet with the given name exists in the workbook.
-     * Creates it if it is absent.
-     */
     private void ensureSheetExists(Workbook workbook, String sheetName) {
         WorksheetCollection sheets = workbook.getWorksheets();
-        Worksheet existing = sheets.get(sheetName);
-        if (existing == null) {
+        if (sheets.get(sheetName) == null) {
             int idx = sheets.add(sheetName);
             log.debug("Target sheet '{}' did not exist — created at index {}.", sheetName, idx);
         }
     }
 
-    /**
-     * Saves the workbook to the given file path.
-     * Creates parent directories if needed.
-     */
     private void saveWorkbook(Workbook workbook, String outputPath) {
         try {
             File outFile = new File(outputPath);

@@ -2,6 +2,7 @@ package com.chartframework.service;
 
 import com.chartframework.enums.ExcelChartType;
 import com.chartframework.exception.ChartValidationException;
+import com.chartframework.model.ChartBatchRequest;
 import com.chartframework.model.ChartConfig;
 import com.chartframework.model.ChartPlacement;
 import com.chartframework.model.ChartRequest;
@@ -12,12 +13,6 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * Integration tests for {@link ChartService}.
- *
- * No Workbook is constructed by the test — the service creates/loads it
- * from the file path internally. A temp file is used for each test.
- */
 @DisplayName("ChartService — Integration")
 class ChartServiceIntegrationTest {
 
@@ -38,7 +33,7 @@ class ChartServiceIntegrationTest {
 
     // ── Shared data ───────────────────────────────────────────────────────────
 
-    private List<List<Object>> monthlySalesData() {
+    private List<List<Object>> salesData() {
         return List.of(
                 List.of("Month", "Sales",  "Profit"),
                 List.of("Jan",   120_000,  36_000),
@@ -56,111 +51,135 @@ class ChartServiceIntegrationTest {
         );
     }
 
-    private ChartRequest.ChartRequestBuilder baseBuilder() {
+    private ChartRequest columnChart() {
         return ChartRequest.builder()
+                .targetSheetName("Dashboard")
+                .chartType(ExcelChartType.COLUMN)
+                .placement(ChartPlacement.of(0, 0, 18, 8))
+                .data(salesData())
+                .config(ChartConfig.builder().chartTitle("Sales").showLegend(true).build())
+                .build();
+    }
+
+    private ChartRequest pieChart() {
+        return ChartRequest.builder()
+                .targetSheetName("Dashboard")
+                .chartType(ExcelChartType.PIE)
+                .placement(ChartPlacement.of(19, 0, 37, 8))
+                .data(pieData())
+                .config(ChartConfig.builder().chartTitle("Regional Revenue").build())
+                .build();
+    }
+
+    private ChartBatchRequest batchOf(ChartRequest... charts) {
+        return ChartBatchRequest.builder()
                 .inputFilePath(tempFile.getAbsolutePath())
-                .targetSheetName("Dashboard");
+                .charts(List.of(charts))
+                .build();
     }
 
     // ─────────────────────────────────────────────────────────────────────────
 
     @Test
-    @DisplayName("creates column chart and returns output path")
-    void columnChart_createsFileAndReturnsPath() {
-        String output = service.createChart(baseBuilder()
-                .chartType(ExcelChartType.COLUMN)
-                .placement(ChartPlacement.of(2, 0, 20, 8))
-                .data(monthlySalesData())
-                .config(ChartConfig.builder().chartTitle("Sales").showLegend(true).build())
+    @DisplayName("single-chart batch succeeds and returns output path")
+    void singleChart_succeeds() {
+        String path = service.createCharts(batchOf(columnChart()));
+        assertNotNull(path);
+        assertTrue(new File(path).exists());
+    }
+
+    @Test
+    @DisplayName("convenience createChart() wrapper works correctly")
+    void convenience_createChart_works() {
+        String path = service.createChart(
+                tempFile.getAbsolutePath(), null, columnChart());
+        assertTrue(new File(path).exists());
+    }
+
+    @Test
+    @DisplayName("multiple charts in one batch are all created")
+    void multipleCarts_inOneBatch() {
+        assertDoesNotThrow(() ->
+                service.createCharts(batchOf(columnChart(), pieChart())));
+    }
+
+    @Test
+    @DisplayName("target sheets are auto-created when absent")
+    void autoCreatesTargetSheets() {
+        ChartRequest newSheetChart = ChartRequest.builder()
+                .targetSheetName("BrandNewSheet")
+                .chartType(ExcelChartType.LINE)
+                .placement(ChartPlacement.of(0, 0, 15, 8))
+                .data(salesData())
+                .build();
+        assertDoesNotThrow(() -> service.createCharts(batchOf(newSheetChart)));
+    }
+
+    @Test
+    @DisplayName("two separate batches each get their own hidden sheet")
+    void separateBatches_separateHiddenSheets() {
+        // Batch 1
+        service.createCharts(batchOf(columnChart()));
+
+        // Batch 2 loads the same file
+        service.createCharts(ChartBatchRequest.builder()
+                .inputFilePath(tempFile.getAbsolutePath())
+                .charts(List.of(pieChart()))
                 .build());
 
-        assertNotNull(output);
-        assertTrue(new File(output).exists(), "Output file must exist after createChart()");
+        // File must be non-empty and valid
+        assertTrue(tempFile.length() > 0);
     }
 
     @Test
-    @DisplayName("creates pie chart without error")
-    void pieChart_succeeds() {
-        assertDoesNotThrow(() -> service.createChart(baseBuilder()
-                .chartType(ExcelChartType.PIE)
-                .placement(ChartPlacement.of(0, 0, 18, 8))
-                .data(pieData())
-                .build()));
-    }
-
-    @Test
-    @DisplayName("target sheet is auto-created when it does not exist")
-    void autoCreatesTargetSheet() {
-        // tempFile is a fresh empty xlsx — 'MyNewSheet' does not exist
-        assertDoesNotThrow(() -> service.createChart(
-                ChartRequest.builder()
-                        .inputFilePath(tempFile.getAbsolutePath())
-                        .targetSheetName("MyNewSheet")
-                        .chartType(ExcelChartType.LINE)
-                        .placement(ChartPlacement.of(0, 0, 15, 8))
-                        .data(monthlySalesData())
-                        .build()));
-    }
-
-    @Test
-    @DisplayName("multiple sequential calls update the same file")
-    void multipleCharts_sameFile() {
-        String path = tempFile.getAbsolutePath();
-
-        service.createChart(baseBuilder()
-                .chartType(ExcelChartType.COLUMN)
-                .placement(ChartPlacement.of(0, 0, 18, 8))
-                .data(monthlySalesData()).build());
-
-        service.createChart(baseBuilder()
-                .inputFilePath(path) // reload previously saved file
-                .chartType(ExcelChartType.PIE)
-                .placement(ChartPlacement.of(19, 0, 37, 8))
-                .data(pieData()).build());
-
-        assertTrue(new File(path).length() > 0, "File must not be empty");
-    }
-
-    @Test
-    @DisplayName("separate inputFilePath and outputFilePath are respected")
+    @DisplayName("separate inputFilePath and outputFilePath are both respected")
     void separateInputOutput() throws Exception {
         File outFile = File.createTempFile("chart-out-", ".xlsx");
         outFile.deleteOnExit();
         try {
-            service.createChart(baseBuilder()
+            service.createCharts(ChartBatchRequest.builder()
+                    .inputFilePath(tempFile.getAbsolutePath())
                     .outputFilePath(outFile.getAbsolutePath())
-                    .chartType(ExcelChartType.COLUMN)
-                    .placement(ChartPlacement.of(0, 0, 18, 8))
-                    .data(monthlySalesData()).build());
-
-            assertTrue(outFile.exists() && outFile.length() > 0,
-                    "Output file must be created at the specified path");
+                    .charts(List.of(columnChart()))
+                    .build());
+            assertTrue(outFile.exists() && outFile.length() > 0);
         } finally {
             outFile.delete();
         }
     }
 
     @Test
-    @DisplayName("invalid request throws ChartValidationException")
-    void invalidRequest_throwsValidation() {
+    @DisplayName("invalid batch throws ChartValidationException")
+    void invalidBatch_throwsValidation() {
         assertThrows(ChartValidationException.class, () ->
-                service.createChart(ChartRequest.builder()
-                        .inputFilePath(null)   // invalid
-                        .targetSheetName("Dashboard")
-                        .chartType(ExcelChartType.PIE)
-                        .placement(ChartPlacement.of(0, 0, 10, 5))
-                        .data(monthlySalesData())
+                service.createCharts(ChartBatchRequest.builder()
+                        .inputFilePath(null)      // invalid
+                        .charts(List.of(columnChart()))
                         .build()));
     }
 
     @Test
-    @DisplayName("bar chart succeeds with same data layout as column")
-    void barChart_succeeds() {
-        assertDoesNotThrow(() -> service.createChart(baseBuilder()
+    @DisplayName("empty charts list throws ChartValidationException")
+    void emptyCharts_throwsValidation() {
+        assertThrows(ChartValidationException.class, () ->
+                service.createCharts(ChartBatchRequest.builder()
+                        .inputFilePath(tempFile.getAbsolutePath())
+                        .charts(List.of())        // invalid
+                        .build()));
+    }
+
+    @Test
+    @DisplayName("batch with charts on different sheets succeeds")
+    void chartsOnDifferentSheets_succeed() {
+        ChartRequest analysisChart = ChartRequest.builder()
+                .targetSheetName("Analysis")
                 .chartType(ExcelChartType.BAR)
                 .placement(ChartPlacement.of(0, 0, 18, 8))
-                .data(monthlySalesData())
-                .config(ChartConfig.builder().chartTitle("Bar Chart").build())
-                .build()));
+                .data(salesData())
+                .config(ChartConfig.builder().chartTitle("Analysis Bar").build())
+                .build();
+
+        assertDoesNotThrow(() ->
+                service.createCharts(batchOf(columnChart(), analysisChart)));
     }
 }

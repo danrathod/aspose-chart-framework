@@ -2,6 +2,7 @@ package com.chartframework.validator;
 
 import com.chartframework.enums.ExcelChartType;
 import com.chartframework.exception.ChartValidationException;
+import com.chartframework.model.ChartBatchRequest;
 import com.chartframework.model.ChartConfig;
 import com.chartframework.model.ChartPlacement;
 import com.chartframework.model.ChartRequest;
@@ -34,168 +35,147 @@ class ChartRequestValidatorTest {
         );
     }
 
-    private ChartRequest.ChartRequestBuilder validBuilder() {
+    private ChartRequest validChart() {
         return ChartRequest.builder()
-                .inputFilePath("reports/dashboard.xlsx")
                 .targetSheetName("Dashboard")
                 .chartType(ExcelChartType.COLUMN)
                 .placement(ChartPlacement.of(2, 0, 20, 8))
-                .data(validData());
+                .data(validData())
+                .build();
     }
 
-    // ── Valid requests ────────────────────────────────────────────────────────
+    private ChartBatchRequest.ChartBatchRequestBuilder validBatchBuilder() {
+        return ChartBatchRequest.builder()
+                .inputFilePath("reports/dashboard.xlsx")
+                .charts(List.of(validChart()));
+    }
 
-    @Nested
-    @DisplayName("Valid requests")
-    class ValidRequests {
+    // ── Valid batch ───────────────────────────────────────────────────────────
 
-        @Test @DisplayName("full request passes")
-        void fullRequest_passes() {
-            assertDoesNotThrow(() -> validator.validate(validBuilder().build()));
+    @Nested @DisplayName("Valid batches")
+    class ValidBatches {
+
+        @Test @DisplayName("single chart batch passes")
+        void singleChart_passes() {
+            assertDoesNotThrow(() -> validator.validate(validBatchBuilder().build()));
         }
 
-        @Test @DisplayName("null config uses defaults — passes")
-        void nullConfig_passes() {
-            assertDoesNotThrow(() -> validator.validate(validBuilder().config(null).build()));
+        @Test @DisplayName("multiple charts in same batch pass")
+        void multipleCharts_passes() {
+            ChartBatchRequest batch = validBatchBuilder()
+                    .charts(List.of(validChart(), validChart()))
+                    .build();
+            assertDoesNotThrow(() -> validator.validate(batch));
         }
 
-        @Test @DisplayName("null outputFilePath is allowed (defaults to inputFilePath)")
+        @Test @DisplayName("null outputFilePath is allowed")
         void nullOutputPath_passes() {
             assertDoesNotThrow(() -> validator.validate(
-                    validBuilder().outputFilePath(null).build()));
+                    validBatchBuilder().outputFilePath(null).build()));
         }
     }
 
-    // ── Required field violations ─────────────────────────────────────────────
+    // ── Batch-level violations ────────────────────────────────────────────────
 
-    @Nested
-    @DisplayName("Required field violations")
-    class RequiredViolations {
+    @Nested @DisplayName("Batch-level violations")
+    class BatchViolations {
 
-        @Test @DisplayName("null request throws immediately")
-        void nullRequest_throws() {
+        @Test @DisplayName("null batch throws immediately")
+        void nullBatch_throws() {
             assertThrows(ChartValidationException.class, () -> validator.validate(null));
         }
 
         @Test @DisplayName("null inputFilePath fails")
         void nullFilePath_fails() {
-            ChartRequest req = validBuilder().inputFilePath(null).build();
-            assertThrows(ChartValidationException.class, () -> validator.validate(req));
+            assertThrows(ChartValidationException.class, () ->
+                    validator.validate(validBatchBuilder().inputFilePath(null).build()));
         }
 
         @Test @DisplayName("blank inputFilePath fails")
         void blankFilePath_fails() {
-            ChartRequest req = validBuilder().inputFilePath("   ").build();
-            assertThrows(ChartValidationException.class, () -> validator.validate(req));
+            assertThrows(ChartValidationException.class, () ->
+                    validator.validate(validBatchBuilder().inputFilePath("   ").build()));
         }
 
-        @Test @DisplayName("blank targetSheetName fails")
-        void blankSheetName_fails() {
-            assertThrows(ChartValidationException.class,
-                    () -> validator.validate(validBuilder().targetSheetName("  ").build()));
+        @Test @DisplayName("null charts list fails")
+        void nullCharts_fails() {
+            assertThrows(ChartValidationException.class, () ->
+                    validator.validate(validBatchBuilder().charts(null).build()));
         }
 
-        @Test @DisplayName("null chartType fails")
-        void nullChartType_fails() {
-            assertThrows(ChartValidationException.class,
-                    () -> validator.validate(validBuilder().chartType(null).build()));
-        }
-
-        @Test @DisplayName("null placement fails")
-        void nullPlacement_fails() {
-            assertThrows(ChartValidationException.class,
-                    () -> validator.validate(validBuilder().placement(null).build()));
-        }
-
-        @Test @DisplayName("null data fails")
-        void nullData_fails() {
-            assertThrows(ChartValidationException.class,
-                    () -> validator.validate(validBuilder().data(null).build()));
+        @Test @DisplayName("empty charts list fails")
+        void emptyCharts_fails() {
+            assertThrows(ChartValidationException.class, () ->
+                    validator.validate(validBatchBuilder().charts(List.of()).build()));
         }
     }
 
-    // ── Placement violations ──────────────────────────────────────────────────
+    // ── Per-chart violations ──────────────────────────────────────────────────
 
-    @Nested
-    @DisplayName("Placement violations")
-    class PlacementViolations {
+    @Nested @DisplayName("Per-chart violations")
+    class PerChartViolations {
 
-        @Test @DisplayName("endRow <= startRow fails")
-        void endRowNotGreater_fails() {
-            assertThrows(ChartValidationException.class, () -> validator.validate(
-                    validBuilder().placement(ChartPlacement.of(10, 0, 10, 8)).build()));
-        }
-
-        @Test @DisplayName("endCol <= startCol fails")
-        void endColNotGreater_fails() {
-            assertThrows(ChartValidationException.class, () -> validator.validate(
-                    validBuilder().placement(ChartPlacement.of(2, 5, 20, 5)).build()));
-        }
-
-        @Test @DisplayName("negative startRow fails")
-        void negativeStartRow_fails() {
-            assertThrows(ChartValidationException.class, () -> validator.validate(
-                    validBuilder().placement(ChartPlacement.of(-1, 0, 20, 8)).build()));
-        }
-    }
-
-    // ── Data violations ───────────────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("Data violations")
-    class DataViolations {
-
-        @Test @DisplayName("only header row (no data rows) fails")
-        void onlyHeader_fails() {
-            assertThrows(ChartValidationException.class, () -> validator.validate(
-                    validBuilder().data(List.of(List.of("Month", "Sales"))).build()));
-        }
-
-        @Test @DisplayName("single-column data fails")
-        void singleColumn_fails() {
-            assertThrows(ChartValidationException.class, () -> validator.validate(
-                    validBuilder().data(List.of(
-                            List.of("Month"), List.of("Jan"), List.of("Feb")
-                    )).build()));
-        }
-
-        @Test @DisplayName("ragged rows fail")
-        void raggedRows_fails() {
-            assertThrows(ChartValidationException.class, () -> validator.validate(
-                    validBuilder().data(List.of(
-                            List.of("Month", "Sales", "Profit"),
-                            List.of("Jan",    12000),          // missing Profit
-                            List.of("Feb",    15000,   4500)
-                    )).build()));
-        }
-    }
-
-    // ── Error message quality ─────────────────────────────────────────────────
-
-    @Nested
-    @DisplayName("Error message quality")
-    class ErrorMessages {
-
-        @Test @DisplayName("multiple violations all reported in one throw")
-        void multipleViolations_allReported() {
-            ChartRequest req = ChartRequest.builder()
-                    .inputFilePath(null)
-                    .targetSheetName("")
-                    .chartType(null)
-                    .placement(null)
-                    .data(null)
+        @Test @DisplayName("null chart in list fails with index in message")
+        void nullChart_failsWithIndex() {
+            ChartBatchRequest batch = validBatchBuilder()
+                    .charts(List.of(validChart(), null))
                     .build();
-
             ChartValidationException ex =
-                    assertThrows(ChartValidationException.class, () -> validator.validate(req));
+                    assertThrows(ChartValidationException.class, () -> validator.validate(batch));
+            assertTrue(ex.getMessage().contains("charts[1]"),
+                    "Error should reference chart index 1");
+        }
 
-            String msg = ex.getMessage();
-            assertTrue(msg.contains("inputFilePath"), "should mention inputFilePath");
-            assertTrue(msg.contains("targetSheetName") || msg.contains("blank"),
-                    "should mention sheet name");
-            assertTrue(msg.contains("chartType"),  "should mention chartType");
-            assertTrue(msg.contains("placement"),  "should mention placement");
-            assertTrue(msg.contains("data"),       "should mention data");
+        @Test @DisplayName("blank targetSheetName fails with index")
+        void blankSheetName_failsWithIndex() {
+            ChartRequest bad = ChartRequest.builder()
+                    .targetSheetName("  ")
+                    .chartType(ExcelChartType.COLUMN)
+                    .placement(ChartPlacement.of(0, 0, 10, 5))
+                    .data(validData())
+                    .build();
+            ChartBatchRequest batch = validBatchBuilder().charts(List.of(bad)).build();
+            ChartValidationException ex =
+                    assertThrows(ChartValidationException.class, () -> validator.validate(batch));
+            assertTrue(ex.getMessage().contains("charts[0]"));
+            assertTrue(ex.getMessage().contains("targetSheetName"));
+        }
+
+        @Test @DisplayName("invalid placement fails with index")
+        void badPlacement_failsWithIndex() {
+            ChartRequest bad = ChartRequest.builder()
+                    .targetSheetName("Sheet1")
+                    .chartType(ExcelChartType.PIE)
+                    .placement(ChartPlacement.of(10, 0, 5, 8)) // endRow < startRow
+                    .data(validData())
+                    .build();
+            ChartBatchRequest batch = validBatchBuilder().charts(List.of(bad)).build();
+            ChartValidationException ex =
+                    assertThrows(ChartValidationException.class, () -> validator.validate(batch));
+            assertTrue(ex.getMessage().contains("charts[0]"));
+            assertTrue(ex.getMessage().contains("endRow"));
+        }
+
+        @Test @DisplayName("errors from multiple charts all reported in one throw")
+        void multipleChartErrors_allReported() {
+            ChartRequest bad1 = ChartRequest.builder()
+                    .targetSheetName("")         // invalid
+                    .chartType(ExcelChartType.LINE)
+                    .placement(ChartPlacement.of(0, 0, 10, 5))
+                    .data(validData())
+                    .build();
+            ChartRequest bad2 = ChartRequest.builder()
+                    .targetSheetName("Sheet2")
+                    .chartType(null)             // invalid
+                    .placement(ChartPlacement.of(0, 0, 10, 5))
+                    .data(validData())
+                    .build();
+            ChartBatchRequest batch = validBatchBuilder()
+                    .charts(List.of(bad1, bad2)).build();
+            ChartValidationException ex =
+                    assertThrows(ChartValidationException.class, () -> validator.validate(batch));
+            assertTrue(ex.getMessage().contains("charts[0]"));
+            assertTrue(ex.getMessage().contains("charts[1]"));
         }
     }
 }

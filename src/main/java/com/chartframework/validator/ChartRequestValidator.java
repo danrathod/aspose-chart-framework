@@ -1,6 +1,7 @@
 package com.chartframework.validator;
 
 import com.chartframework.exception.ChartValidationException;
+import com.chartframework.model.ChartBatchRequest;
 import com.chartframework.model.ChartPlacement;
 import com.chartframework.model.ChartRequest;
 import org.slf4j.Logger;
@@ -10,10 +11,11 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Validates a {@link ChartRequest} before any Aspose objects are created.
+ * Validates a {@link ChartBatchRequest} (and every {@link ChartRequest} it
+ * contains) before any Aspose objects are created.
  *
- * <p>Collects <em>all</em> validation errors before throwing, so callers see
- * the complete list of problems in a single pass.</p>
+ * <p>All violations across the entire batch are collected before throwing, so
+ * callers see the complete list in one pass.</p>
  */
 public class ChartRequestValidator {
 
@@ -22,104 +24,126 @@ public class ChartRequestValidator {
     private static final int MAX_EXCEL_ROWS = 1_048_576;
     private static final int MAX_EXCEL_COLS = 16_384;
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Public API
+    // ─────────────────────────────────────────────────────────────────────────
+
     /**
-     * Validates the request. Throws {@link ChartValidationException} listing all
-     * violations if any are found; returns silently otherwise.
+     * Validates a {@link ChartBatchRequest}.
+     * Collects all errors before throwing {@link ChartValidationException}.
      */
-    public void validate(ChartRequest request) {
+    public void validate(ChartBatchRequest batchRequest) {
         List<String> errors = new ArrayList<>();
 
-        if (request == null) {
-            throw new ChartValidationException("ChartRequest must not be null.");
+        if (batchRequest == null) {
+            throw new ChartValidationException("ChartBatchRequest must not be null.");
         }
 
-        // ── File path ──────────────────────────────────────────────────────────
-        if (isBlank(request.getInputFilePath())) {
-            errors.add("inputFilePath must not be null or blank. " +
-                    "Provide the path to an existing .xlsx file, or a new file path to create.");
+        // ── File path ─────────────────────────────────────────────────────────
+        if (isBlank(batchRequest.getInputFilePath())) {
+            errors.add("inputFilePath must not be null or blank.");
         }
 
-        // ── Sheet name ────────────────────────────────────────────────────────
-        if (isBlank(request.getTargetSheetName())) {
-            errors.add("targetSheetName must not be blank.");
-        }
-
-        // ── Chart type ────────────────────────────────────────────────────────
-        if (request.getChartType() == null) {
-            errors.add("chartType must not be null.");
-        }
-
-        // ── Placement ────────────────────────────────────────────────────────
-        ChartPlacement p = request.getPlacement();
-        if (p == null) {
-            errors.add("placement must not be null.");
+        // ── Charts list ───────────────────────────────────────────────────────
+        List<ChartRequest> charts = batchRequest.getCharts();
+        if (charts == null || charts.isEmpty()) {
+            errors.add("charts list must not be null or empty. " +
+                    "Provide at least one ChartRequest.");
         } else {
-            validatePlacement(p, errors);
-        }
-
-        // ── Data ─────────────────────────────────────────────────────────────
-        List<List<Object>> data = request.getData();
-        if (data == null || data.isEmpty()) {
-            errors.add("data must not be null or empty.");
-        } else {
-            validateData(data, errors);
+            for (int i = 0; i < charts.size(); i++) {
+                validateSingleChart(charts.get(i), i, errors);
+            }
         }
 
         if (!errors.isEmpty()) {
-            String message = "ChartRequest validation failed:\n  - " +
+            String message = "ChartBatchRequest validation failed:\n  - " +
                     String.join("\n  - ", errors);
             log.error(message);
             throw new ChartValidationException(message);
         }
 
-        log.debug("ChartRequest validation passed for sheet='{}', type='{}'",
-                request.getTargetSheetName(), request.getChartType());
+        log.debug("ChartBatchRequest validation passed — {} chart(s), file='{}'",
+                charts != null ? charts.size() : 0,
+                batchRequest.getInputFilePath());
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
 
-    private void validatePlacement(ChartPlacement p, List<String> errors) {
+    private void validateSingleChart(ChartRequest req, int index, List<String> errors) {
+        String prefix = "charts[" + index + "]: ";
+
+        if (req == null) {
+            errors.add(prefix + "ChartRequest must not be null.");
+            return;
+        }
+
+        if (isBlank(req.getTargetSheetName())) {
+            errors.add(prefix + "targetSheetName must not be blank.");
+        }
+
+        if (req.getChartType() == null) {
+            errors.add(prefix + "chartType must not be null.");
+        }
+
+        ChartPlacement p = req.getPlacement();
+        if (p == null) {
+            errors.add(prefix + "placement must not be null.");
+        } else {
+            validatePlacement(p, prefix, errors);
+        }
+
+        List<List<Object>> data = req.getData();
+        if (data == null || data.isEmpty()) {
+            errors.add(prefix + "data must not be null or empty.");
+        } else {
+            validateData(data, prefix, errors);
+        }
+    }
+
+    private void validatePlacement(ChartPlacement p, String prefix, List<String> errors) {
         if (p.getStartRow() < 0) {
-            errors.add("placement.startRow must be >= 0 (was " + p.getStartRow() + ").");
+            errors.add(prefix + "placement.startRow must be >= 0 (was " + p.getStartRow() + ").");
         }
         if (p.getStartColumn() < 0) {
-            errors.add("placement.startColumn must be >= 0 (was " + p.getStartColumn() + ").");
+            errors.add(prefix + "placement.startColumn must be >= 0 (was " + p.getStartColumn() + ").");
         }
         if (p.getEndRow() >= MAX_EXCEL_ROWS) {
-            errors.add("placement.endRow exceeds Excel maximum of " + (MAX_EXCEL_ROWS - 1) + ".");
+            errors.add(prefix + "placement.endRow exceeds Excel maximum of " + (MAX_EXCEL_ROWS - 1) + ".");
         }
         if (p.getEndColumn() >= MAX_EXCEL_COLS) {
-            errors.add("placement.endColumn exceeds Excel maximum of " + (MAX_EXCEL_COLS - 1) + ".");
+            errors.add(prefix + "placement.endColumn exceeds Excel maximum of " + (MAX_EXCEL_COLS - 1) + ".");
         }
         if (p.getEndRow() <= p.getStartRow()) {
-            errors.add("placement.endRow (" + p.getEndRow() +
+            errors.add(prefix + "placement.endRow (" + p.getEndRow() +
                     ") must be greater than startRow (" + p.getStartRow() + ").");
         }
         if (p.getEndColumn() <= p.getStartColumn()) {
-            errors.add("placement.endColumn (" + p.getEndColumn() +
+            errors.add(prefix + "placement.endColumn (" + p.getEndColumn() +
                     ") must be greater than startColumn (" + p.getStartColumn() + ").");
         }
     }
 
-    private void validateData(List<List<Object>> data, List<String> errors) {
+    private void validateData(List<List<Object>> data, String prefix, List<String> errors) {
         if (data.size() < 2) {
-            errors.add("data must contain at least 2 rows (1 header + 1 data row). Found: "
-                    + data.size() + ".");
+            errors.add(prefix + "data must contain at least 2 rows " +
+                    "(1 header + 1 data row). Found: " + data.size() + ".");
             return;
         }
 
         int expectedCols = data.get(0) != null ? data.get(0).size() : 0;
         if (expectedCols < 2) {
-            errors.add("data header row must have at least 2 columns " +
+            errors.add(prefix + "data header row must have at least 2 columns " +
                     "(1 category + 1 series). Found: " + expectedCols + ".");
         }
 
         for (int i = 1; i < data.size(); i++) {
             List<Object> row = data.get(i);
             if (row == null || row.isEmpty()) {
-                errors.add("data row " + i + " is null or empty.");
+                errors.add(prefix + "data row " + i + " is null or empty.");
             } else if (row.size() != expectedCols) {
-                errors.add("data row " + i + " has " + row.size() +
+                errors.add(prefix + "data row " + i + " has " + row.size() +
                         " columns but header has " + expectedCols +
                         ". All rows must be consistent.");
             }

@@ -3,6 +3,7 @@ package com.chartframework.manager;
 import com.aspose.cells.Workbook;
 import com.aspose.cells.Worksheet;
 import com.chartframework.enums.ExcelChartType;
+import com.chartframework.model.ChartBatchRequest;
 import com.chartframework.model.ChartPlacement;
 import com.chartframework.model.ChartRequest;
 import com.chartframework.model.DataRange;
@@ -28,80 +29,148 @@ class HiddenSheetManagerTest {
         workbook = new Workbook();
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
     private List<List<Object>> threeRowData() {
         return List.of(
                 List.of("Month", "Revenue", "Cost"),
-                List.of("Jan", 10000, 6000),
-                List.of("Feb", 12000, 7000),
-                List.of("Mar", 11000, 6500)
+                List.of("Jan", 10_000, 6_000),
+                List.of("Feb", 12_000, 7_000),
+                List.of("Mar", 11_000, 6_500)
         );
     }
 
-    private ChartRequest buildRequest(String preferredName) {
+    private ChartRequest chartRequest(String title) {
         return ChartRequest.builder()
-                .inputFilePath("test.xlsx")
                 .targetSheetName("Sheet1")
                 .chartType(ExcelChartType.COLUMN)
-                .placement(ChartPlacement.of(2, 0, 20, 8))
+                .placement(ChartPlacement.of(0, 0, 18, 8))
                 .data(threeRowData())
-                .preferredHiddenSheetBaseName(preferredName)
                 .build();
     }
 
+    private ChartBatchRequest batchOf(ChartRequest... charts) {
+        return ChartBatchRequest.builder()
+                .inputFilePath("test.xlsx")
+                .charts(List.of(charts))
+                .build();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     @Test
-    @DisplayName("writeData creates a hidden sheet")
-    void writeData_createsHiddenSheet() {
-        DataRange range = manager.writeData(buildRequest(null), workbook);
-        Worksheet ws = workbook.getWorksheets().get(range.getSheetName());
+    @DisplayName("single chart batch creates exactly one hidden sheet")
+    void singleChart_createsOneHiddenSheet() {
+        List<DataRange> ranges = manager.writeDataForBatch(
+                batchOf(chartRequest("Sales")), workbook);
+
+        assertEquals(1, ranges.size());
+        Worksheet ws = workbook.getWorksheets().get(ranges.get(0).getSheetName());
         assertNotNull(ws, "Hidden sheet must exist");
         assertFalse(ws.isVisible(), "Sheet must be hidden");
     }
 
     @Test
-    @DisplayName("DataRange reflects correct row/column counts")
-    void writeData_correctCounts() {
-        DataRange range = manager.writeData(buildRequest(null), workbook);
-        assertEquals(0,  range.getStartRow());
-        assertEquals(3,  range.getEndRow());
-        assertEquals(0,  range.getStartColumn());
-        assertEquals(2,  range.getEndColumn());
-        assertEquals(3,  range.getDataRowCount());
-        assertEquals(2,  range.getSeriesCount());
+    @DisplayName("two charts in same batch share the same hidden sheet")
+    void twoCharts_shareOneHiddenSheet() {
+        List<DataRange> ranges = manager.writeDataForBatch(
+                batchOf(chartRequest("Sales"), chartRequest("Revenue")), workbook);
+
+        assertEquals(2, ranges.size());
+        assertEquals(ranges.get(0).getSheetName(), ranges.get(1).getSheetName(),
+                "Both charts in the same batch must share the same hidden sheet");
     }
 
     @Test
-    @DisplayName("two successive calls produce unique sheet names")
-    void writeData_uniqueNames() {
-        DataRange r1 = manager.writeData(buildRequest(null), workbook);
-        DataRange r2 = manager.writeData(buildRequest(null), workbook);
-        assertNotEquals(r1.getSheetName(), r2.getSheetName());
+    @DisplayName("DataRange for each chart points to correct rows")
+    void dataRanges_haveCorrectRowBounds() {
+        List<DataRange> ranges = manager.writeDataForBatch(
+                batchOf(chartRequest("Chart1"), chartRequest("Chart2")), workbook);
+
+        DataRange r1 = ranges.get(0);
+        DataRange r2 = ranges.get(1);
+
+        // Chart 1: title at row 0, data at rows 1-3 (3 data rows)
+        assertEquals(1, r1.getStartRow(), "Chart1 data should start at row 1 (after title)");
+        assertEquals(3, r1.getEndRow(),   "Chart1 data should end at row 3");
+
+        // Chart 2: 2 blank rows after Chart1 (rows 4,5), title at row 6, data rows 7-9
+        assertEquals(7, r2.getStartRow(), "Chart2 data should start at row 7");
+        assertEquals(9, r2.getEndRow(),   "Chart2 data should end at row 9");
     }
 
     @Test
-    @DisplayName("preferred base name is used as prefix")
-    void writeData_usesPreferredBaseName() {
-        DataRange range = manager.writeData(buildRequest("mydata_"), workbook);
-        assertTrue(range.getSheetName().startsWith("mydata_"));
+    @DisplayName("title label is written above each chart's data block")
+    void titleRow_isWrittenAboveData() {
+        List<DataRange> ranges = manager.writeDataForBatch(
+                batchOf(chartRequest("MyChart")), workbook);
+
+        String sheetName = ranges.get(0).getSheetName();
+        Worksheet ws     = workbook.getWorksheets().get(sheetName);
+
+        // Row 0 should be the title label (not the data header)
+        String titleCellValue = ws.getCells().get(0, 0).getStringValue();
+        assertTrue(titleCellValue.contains("COLUMN"),
+                "Title row should contain the chart type name");
+        // Row 1 should be the data header "Month"
+        String headerCell = ws.getCells().get(1, 0).getStringValue();
+        assertEquals("Month", headerCell, "Data header should be at row 1");
     }
 
     @Test
-    @DisplayName("cell values are written correctly")
-    void writeData_cellValuesCorrect() {
-        DataRange range = manager.writeData(buildRequest(null), workbook);
-        Worksheet ws = workbook.getWorksheets().get(range.getSheetName());
-        assertEquals("Month",   ws.getCells().get(0, 0).getStringValue());
-        assertEquals("Revenue", ws.getCells().get(0, 1).getStringValue());
-        assertEquals("Jan",     ws.getCells().get(1, 0).getStringValue());
-        assertEquals(10000.0,   ws.getCells().get(1, 1).getDoubleValue(), 0.001);
+    @DisplayName("two blank separator rows exist between chart blocks")
+    void separatorRows_arePresentBetweenBlocks() {
+        List<DataRange> ranges = manager.writeDataForBatch(
+                batchOf(chartRequest("A"), chartRequest("B")), workbook);
+
+        String    sheetName = ranges.get(0).getSheetName();
+        Worksheet ws        = workbook.getWorksheets().get(sheetName);
+
+        // Chart1 data ends at row 3, so rows 4 and 5 should be blank,
+        // and row 6 should be Chart2's title label.
+        String row4 = ws.getCells().get(4, 0).getStringValue();
+        String row5 = ws.getCells().get(5, 0).getStringValue();
+        assertTrue(row4.isEmpty() || row4.isBlank(), "Row 4 must be blank separator");
+        assertTrue(row5.isEmpty() || row5.isBlank(), "Row 5 must be blank separator");
+
+        String chart2Title = ws.getCells().get(6, 0).getStringValue();
+        assertTrue(chart2Title.startsWith("■"), "Chart2 title must start at row 6");
     }
 
     @Test
-    @DisplayName("10 calls all produce unique names")
-    void writeData_tenCallsAllUnique() {
+    @DisplayName("two separate batches get different hidden sheets")
+    void separateBatches_getDifferentSheets() {
+        List<DataRange> ranges1 = manager.writeDataForBatch(
+                batchOf(chartRequest("Batch1Chart")), workbook);
+        List<DataRange> ranges2 = manager.writeDataForBatch(
+                batchOf(chartRequest("Batch2Chart")), workbook);
+
+        assertNotEquals(ranges1.get(0).getSheetName(), ranges2.get(0).getSheetName(),
+                "Different batches must use different hidden sheets");
+    }
+
+    @Test
+    @DisplayName("DataRange returns correct row/column counts")
+    void dataRange_correctCounts() {
+        List<DataRange> ranges = manager.writeDataForBatch(
+                batchOf(chartRequest("Test")), workbook);
+        DataRange r = ranges.get(0);
+        // 3 data rows (header excluded), 2 series cols (category excluded)
+        assertEquals(3, r.getDataRowCount());
+        assertEquals(2, r.getSeriesCount());
+        assertEquals(0, r.getStartColumn());
+        assertEquals(2, r.getEndColumn());
+    }
+
+    @Test
+    @DisplayName("10 batches each get unique hidden sheet names")
+    void tenBatches_allUniqueSheetNames() {
         Set<String> names = new HashSet<>();
         for (int i = 0; i < 10; i++) {
-            DataRange r = manager.writeData(buildRequest(null), workbook);
-            assertTrue(names.add(r.getSheetName()), "Duplicate: " + r.getSheetName());
+            List<DataRange> ranges = manager.writeDataForBatch(
+                    batchOf(chartRequest("Chart" + i)), workbook);
+            assertTrue(names.add(ranges.get(0).getSheetName()),
+                    "Duplicate sheet name: " + ranges.get(0).getSheetName());
         }
         assertEquals(10, names.size());
     }
