@@ -10,10 +10,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Validates a {@link ChartRequest} before any Aspose objects are touched.
+ * Validates a {@link ChartRequest} before any Aspose objects are created.
  *
- * <p>Collects <em>all</em> validation errors before throwing, so callers
- * see the full list of problems in one pass.</p>
+ * <p>Collects <em>all</em> validation errors before throwing, so callers see
+ * the complete list of problems in a single pass.</p>
  */
 public class ChartRequestValidator {
 
@@ -23,8 +23,8 @@ public class ChartRequestValidator {
     private static final int MAX_EXCEL_COLS = 16_384;
 
     /**
-     * Validates the request. Throws {@link ChartValidationException} if any
-     * violation is found; returns silently otherwise.
+     * Validates the request. Throws {@link ChartValidationException} listing all
+     * violations if any are found; returns silently otherwise.
      */
     public void validate(ChartRequest request) {
         List<String> errors = new ArrayList<>();
@@ -33,18 +33,23 @@ public class ChartRequestValidator {
             throw new ChartValidationException("ChartRequest must not be null.");
         }
 
-        // ── Required object references ──────────────────────────────────────
-        if (request.getWorkbook() == null) {
-            errors.add("workbook must not be null.");
+        // ── File path ──────────────────────────────────────────────────────────
+        if (isBlank(request.getInputFilePath())) {
+            errors.add("inputFilePath must not be null or blank. " +
+                    "Provide the path to an existing .xlsx file, or a new file path to create.");
         }
+
+        // ── Sheet name ────────────────────────────────────────────────────────
         if (isBlank(request.getTargetSheetName())) {
             errors.add("targetSheetName must not be blank.");
         }
+
+        // ── Chart type ────────────────────────────────────────────────────────
         if (request.getChartType() == null) {
             errors.add("chartType must not be null.");
         }
 
-        // ── Placement ───────────────────────────────────────────────────────
+        // ── Placement ────────────────────────────────────────────────────────
         ChartPlacement p = request.getPlacement();
         if (p == null) {
             errors.add("placement must not be null.");
@@ -52,7 +57,7 @@ public class ChartRequestValidator {
             validatePlacement(p, errors);
         }
 
-        // ── Data ────────────────────────────────────────────────────────────
+        // ── Data ─────────────────────────────────────────────────────────────
         List<List<Object>> data = request.getData();
         if (data == null || data.isEmpty()) {
             errors.add("data must not be null or empty.");
@@ -61,7 +66,8 @@ public class ChartRequestValidator {
         }
 
         if (!errors.isEmpty()) {
-            String message = "ChartRequest validation failed:\n  - " + String.join("\n  - ", errors);
+            String message = "ChartRequest validation failed:\n  - " +
+                    String.join("\n  - ", errors);
             log.error(message);
             throw new ChartValidationException(message);
         }
@@ -86,12 +92,12 @@ public class ChartRequestValidator {
             errors.add("placement.endColumn exceeds Excel maximum of " + (MAX_EXCEL_COLS - 1) + ".");
         }
         if (p.getEndRow() <= p.getStartRow()) {
-            errors.add("placement.endRow (" + p.getEndRow()
-                    + ") must be greater than startRow (" + p.getStartRow() + ").");
+            errors.add("placement.endRow (" + p.getEndRow() +
+                    ") must be greater than startRow (" + p.getStartRow() + ").");
         }
         if (p.getEndColumn() <= p.getStartColumn()) {
-            errors.add("placement.endColumn (" + p.getEndColumn()
-                    + ") must be greater than startColumn (" + p.getStartColumn() + ").");
+            errors.add("placement.endColumn (" + p.getEndColumn() +
+                    ") must be greater than startColumn (" + p.getStartColumn() + ").");
         }
     }
 
@@ -104,8 +110,8 @@ public class ChartRequestValidator {
 
         int expectedCols = data.get(0) != null ? data.get(0).size() : 0;
         if (expectedCols < 2) {
-            errors.add("data header row must have at least 2 columns (1 category + 1 series). Found: "
-                    + expectedCols + ".");
+            errors.add("data header row must have at least 2 columns " +
+                    "(1 category + 1 series). Found: " + expectedCols + ".");
         }
 
         for (int i = 1; i < data.size(); i++) {
@@ -113,8 +119,9 @@ public class ChartRequestValidator {
             if (row == null || row.isEmpty()) {
                 errors.add("data row " + i + " is null or empty.");
             } else if (row.size() != expectedCols) {
-                errors.add("data row " + i + " has " + row.size()
-                        + " columns but header has " + expectedCols + ". All rows must be consistent.");
+                errors.add("data row " + i + " has " + row.size() +
+                        " columns but header has " + expectedCols +
+                        ". All rows must be consistent.");
             }
         }
     }

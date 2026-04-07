@@ -1,7 +1,10 @@
 package com.chartframework.service;
 
-import com.aspose.cells.Chart;
+import com.aspose.cells.Workbook;
+import com.aspose.cells.Worksheet;
+import com.aspose.cells.WorksheetCollection;
 import com.chartframework.builder.ChartBuilder;
+import com.chartframework.exception.ChartFrameworkException;
 import com.chartframework.factory.ChartStrategyFactory;
 import com.chartframework.manager.HiddenSheetManager;
 import com.chartframework.model.ChartRequest;
@@ -11,40 +14,48 @@ import com.chartframework.validator.ChartRequestValidator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.File;
+
 /**
  * Primary orchestration layer — the single public API entry point for the
  * chart generation framework.
+ *
+ * <h2>Consumer-Friendly Design</h2>
+ * <p>Consumers pass an Excel <b>file path</b> (not a Workbook). The framework
+ * handles all Aspose.Cells interactions internally:</p>
+ * <ol>
+ *   <li>Loads the workbook from {@link ChartRequest#getInputFilePath()}
+ *       (creates a blank workbook if the file does not exist).</li>
+ *   <li>Ensures the target sheet exists (creates it if absent).</li>
+ *   <li>Writes chart data into a hidden sheet.</li>
+ *   <li>Creates and configures the chart.</li>
+ *   <li>Saves the workbook to {@link ChartRequest#effectiveOutputPath()}.</li>
+ * </ol>
+ * <p>Consumers therefore have <b>zero dependency on Aspose.Cells</b> in their
+ * own code — they only interact with the framework's public model classes.</p>
  *
  * <h2>Orchestration Flow</h2>
  * <pre>
  *   createChart(request)
  *       │
- *       ├─1─ ChartRequestValidator  → validate all inputs (fail fast)
- *       │
- *       ├─2─ HiddenSheetManager     → write data to a new hidden sheet
- *       │                             returns DataRange (sheet + row/col refs)
- *       │
- *       ├─3─ ChartBuilder           → create &amp; position the Chart object
- *       │                             in the target visible worksheet
- *       │
- *       ├─4─ ChartStrategyFactory   → resolve the correct ChartStrategy
- *       │
- *       └─5─ ChartStrategy          → configure series, axes, labels, legend
+ *       ├─1─ ChartRequestValidator     → validate all inputs (fail fast)
+ *       ├─2─ WorkbookLoader            → load/create Workbook from file path
+ *       ├─3─ SheetEnsurer              → create target sheet if absent
+ *       ├─4─ HiddenSheetManager        → write data to new hidden sheet
+ *       ├─5─ ChartBuilder              → create &amp; position Chart object
+ *       ├─6─ ChartStrategyFactory      → resolve ChartStrategy
+ *       ├─7─ ChartStrategy             → configure series, axes, legend
+ *       └─8─ WorkbookSaver             → save workbook to output path
  * </pre>
- *
- * <h2>Thread Safety</h2>
- * <p>This service itself is stateless; all mutable state lives in the
- * caller-owned {@link com.aspose.cells.Workbook}. Do not share a single
- * Workbook across threads without external synchronisation.</p>
  *
  * <h2>Usage Example</h2>
  * <pre>{@code
- * ChartService service = ChartService.create();  // or inject via DI
+ * ChartService service = ChartService.create();
  *
  * service.createChart(ChartRequest.builder()
- *     .workbook(wb)
+ *     .inputFilePath("reports/dashboard.xlsx")
  *     .targetSheetName("Dashboard")
- *     .chartType(ExcelChartType.COLUMN_CLUSTERED)
+ *     .chartType(ExcelChartType.COLUMN)
  *     .placement(ChartPlacement.of(2, 0, 20, 8))
  *     .data(salesData)
  *     .config(ChartConfig.builder()
@@ -52,30 +63,23 @@ import org.slf4j.LoggerFactory;
  *         .showLegend(true)
  *         .build())
  *     .build());
- *
- * // Call again for additional charts — no collision
- * service.createChart(anotherRequest);
- *
- * wb.save("output.xlsx");
+ * // Workbook saved automatically to "reports/dashboard.xlsx"
  * }</pre>
  */
 public class ChartService {
 
     private static final Logger log = LoggerFactory.getLogger(ChartService.class);
 
-    // ── Collaborators (injected, never null) ──────────────────────────────────
-    private final ChartRequestValidator  validator;
-    private final HiddenSheetManager     hiddenSheetManager;
-    private final ChartBuilder           chartBuilder;
-    private final ChartStrategyFactory   strategyFactory;
+    private final ChartRequestValidator validator;
+    private final HiddenSheetManager    hiddenSheetManager;
+    private final ChartBuilder          chartBuilder;
+    private final ChartStrategyFactory  strategyFactory;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Construction
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Full constructor for dependency injection (DI frameworks, testing).
-     */
+    /** Full constructor for dependency injection. */
     public ChartService(ChartRequestValidator  validator,
                         HiddenSheetManager     hiddenSheetManager,
                         ChartBuilder           chartBuilder,
@@ -88,7 +92,7 @@ public class ChartService {
 
     /**
      * Convenience factory — creates a fully wired {@link ChartService} with
-     * default collaborators. Suitable for standalone use outside a DI container.
+     * default collaborators. Suitable for use outside a DI container.
      */
     public static ChartService create() {
         return new ChartService(
@@ -100,56 +104,129 @@ public class ChartService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Public API  ← single entry point
+    // Public API
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * Creates a chart in the specified workbook according to the given request.
+     * Creates a chart in the Excel file specified by the request.
      *
-     * <p>This method is safe to call multiple times on the same workbook —
-     * each call produces a new hidden sheet with a unique name, ensuring
-     * complete data isolation between charts.</p>
+     * <p>The method:</p>
+     * <ol>
+     *   <li>Validates the request.</li>
+     *   <li>Loads (or creates) the workbook from {@link ChartRequest#getInputFilePath()}.</li>
+     *   <li>Ensures the target sheet exists, creating it if necessary.</li>
+     *   <li>Writes chart data into a new hidden sheet.</li>
+     *   <li>Creates and fully configures the chart.</li>
+     *   <li>Saves the workbook to {@link ChartRequest#effectiveOutputPath()}.</li>
+     * </ol>
      *
-     * @param request Fully populated {@link ChartRequest} describing the
-     *                chart to create.
-     * @throws com.chartframework.exception.ChartValidationException  if the
-     *         request fails validation.
-     * @throws com.chartframework.exception.ChartFrameworkException   if chart
-     *         creation fails for any other reason.
+     * @param request Fully populated {@link ChartRequest}.
+     * @return The output file path where the workbook was saved.
+     * @throws com.chartframework.exception.ChartValidationException if validation fails.
+     * @throws com.chartframework.exception.ChartFrameworkException  for all other errors.
      */
-    public void createChart(ChartRequest request) {
-        log.info("▶ createChart() — type=[{}], sheet=[{}]",
+    public String createChart(ChartRequest request) {
+        log.info("▶ createChart() — type=[{}], sheet=[{}], input=[{}]",
                 request != null ? request.getChartType() : "null",
-                request != null ? request.getTargetSheetName() : "null");
+                request != null ? request.getTargetSheetName() : "null",
+                request != null ? request.getInputFilePath() : "null");
 
         // Step 1 — Validate
         validator.validate(request);
 
-        // Step 2 — Write data to hidden sheet
-        DataRange dataRange = hiddenSheetManager.writeData(request);
-        log.debug("  Data written → hidden sheet='{}', rows={}, series={}",
-                dataRange.getSheetName(),
-                dataRange.getDataRowCount(),
-                dataRange.getSeriesCount());
+        // Step 2 — Load or create workbook
+        Workbook workbook = loadOrCreate(request.getInputFilePath());
 
-        // Step 3 — Create & position the chart in the target sheet
-        Chart chart = chartBuilder.buildChart(request);
+        // Step 3 — Ensure target sheet exists
+        ensureSheetExists(workbook, request.getTargetSheetName());
 
-        // Step 4 — Resolve strategy
+        // Step 4 — Write data to hidden sheet
+        DataRange dataRange = hiddenSheetManager.writeData(request, workbook);
+
+        // Step 5 — Create & position chart in target sheet
+        com.aspose.cells.Chart chart = chartBuilder.buildChart(request, workbook);
+
+        // Step 6 — Resolve strategy
         ChartStrategy strategy = strategyFactory.getStrategy(request.getChartType());
 
-        // Step 5 — Configure series, axes, labels, legend
+        // Step 7 — Configure series, axes, labels, legend
         strategy.configure(chart, request, dataRange);
 
-        // Recalculate chart formulas
+        // Recalculate chart formulas (non-fatal if it warns)
         try {
             chart.calculate();
         } catch (Exception e) {
             log.warn("Chart calculation warning (non-fatal): {}", e.getMessage());
         }
 
-        log.info("✔ Chart created: [{}] on sheet '[{}]'",
-                request.getChartType().getDisplayName(),
-                request.getTargetSheetName());
+        // Step 8 — Save workbook
+        String outputPath = request.effectiveOutputPath();
+        saveWorkbook(workbook, outputPath);
+
+        log.info("✔ Chart [{}] created and saved to '{}'",
+                request.getChartType().getDisplayName(), outputPath);
+
+        return outputPath;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Private helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Loads an existing workbook from the given path, or creates a fresh blank
+     * workbook if the file does not exist.
+     */
+    private Workbook loadOrCreate(String filePath) {
+        try {
+            File file = new File(filePath);
+            if (file.exists() && file.isFile()) {
+                log.debug("Loading existing workbook from '{}'", filePath);
+                return new Workbook(filePath);
+            } else {
+                log.debug("File '{}' not found — creating a new blank workbook.", filePath);
+                // Ensure parent directories exist
+                File parent = file.getParentFile();
+                if (parent != null && !parent.exists()) {
+                    parent.mkdirs();
+                }
+                return new Workbook();
+            }
+        } catch (Exception e) {
+            throw new ChartFrameworkException(
+                    "Failed to load workbook from '" + filePath + "': " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Ensures a worksheet with the given name exists in the workbook.
+     * Creates it if it is absent.
+     */
+    private void ensureSheetExists(Workbook workbook, String sheetName) {
+        WorksheetCollection sheets = workbook.getWorksheets();
+        Worksheet existing = sheets.get(sheetName);
+        if (existing == null) {
+            int idx = sheets.add(sheetName);
+            log.debug("Target sheet '{}' did not exist — created at index {}.", sheetName, idx);
+        }
+    }
+
+    /**
+     * Saves the workbook to the given file path.
+     * Creates parent directories if needed.
+     */
+    private void saveWorkbook(Workbook workbook, String outputPath) {
+        try {
+            File outFile = new File(outputPath);
+            File parent  = outFile.getParentFile();
+            if (parent != null && !parent.exists()) {
+                parent.mkdirs();
+            }
+            workbook.save(outputPath);
+            log.debug("Workbook saved to '{}'", outputPath);
+        } catch (Exception e) {
+            throw new ChartFrameworkException(
+                    "Failed to save workbook to '" + outputPath + "': " + e.getMessage(), e);
+        }
     }
 }
