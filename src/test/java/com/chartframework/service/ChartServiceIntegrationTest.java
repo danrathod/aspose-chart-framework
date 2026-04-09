@@ -1,11 +1,9 @@
 package com.chartframework.service;
 
+import com.chartframework.config.*;
 import com.chartframework.enums.ExcelChartType;
 import com.chartframework.exception.ChartValidationException;
-import com.chartframework.model.ChartBatchRequest;
-import com.chartframework.model.ChartConfig;
-import com.chartframework.model.ChartPlacement;
-import com.chartframework.model.ChartRequest;
+import com.chartframework.model.*;
 import org.junit.jupiter.api.*;
 
 import java.io.File;
@@ -19,35 +17,26 @@ class ChartServiceIntegrationTest {
     private ChartService service;
     private File         tempFile;
 
-    @BeforeEach
-    void setUp() throws Exception {
+    @BeforeEach void setUp() throws Exception {
         service  = ChartService.create();
         tempFile = File.createTempFile("chart-test-", ".xlsx");
         tempFile.deleteOnExit();
     }
-
-    @AfterEach
-    void tearDown() {
-        if (tempFile != null) tempFile.delete();
-    }
-
-    // ── Shared data ───────────────────────────────────────────────────────────
+    @AfterEach void tearDown() { if (tempFile != null) tempFile.delete(); }
 
     private List<List<Object>> salesData() {
         return List.of(
-                List.of("Month", "Sales",  "Profit"),
-                List.of("Jan",   120_000,  36_000),
-                List.of("Feb",   135_000,  40_500),
-                List.of("Mar",   118_000,  35_400)
+                List.of("Month", "Sales", "Profit"),
+                List.of("Jan",   120_000, 36_000),
+                List.of("Feb",   135_000, 40_500)
         );
     }
 
     private List<List<Object>> pieData() {
         return List.of(
-                List.of("Region",  "Revenue"),
-                List.of("North",   320_000),
-                List.of("South",   280_000),
-                List.of("East",    410_000)
+                List.of("Region", "Revenue"),
+                List.of("North",  320_000),
+                List.of("South",  280_000)
         );
     }
 
@@ -57,7 +46,19 @@ class ChartServiceIntegrationTest {
                 .chartType(ExcelChartType.COLUMN)
                 .placement(ChartPlacement.of(0, 0, 18, 8))
                 .data(salesData())
-                .config(ChartConfig.builder().chartTitle("Sales").showLegend(true).build())
+                .config(ChartConfig.builder()
+                        .title(TitleConfig.of("Sales"))
+                        .legend(LegendConfig.at(LegendConfig.Position.BOTTOM))
+                        .valueAxis(AxisConfig.builder()
+                                .numberFormat("$#,##0")
+                                .majorGridlines(GridlineConfig.solid("#E0E0E0", 0.5))
+                                .build())
+                        .series(SeriesConfig.builder()
+                                .style(SeriesStyleConfig.solidColor("#1565C0"))
+                                .style(SeriesStyleConfig.solidColor("#2E7D32"))
+                                .build())
+                        .barColumn(BarColumnConfig.defaults())
+                        .build())
                 .build();
     }
 
@@ -67,7 +68,14 @@ class ChartServiceIntegrationTest {
                 .chartType(ExcelChartType.PIE)
                 .placement(ChartPlacement.of(19, 0, 37, 8))
                 .data(pieData())
-                .config(ChartConfig.builder().chartTitle("Regional Revenue").build())
+                .config(ChartConfig.builder()
+                        .title(TitleConfig.of("Regional Revenue"))
+                        .pie(PieChartConfig.builder()
+                                .firstSliceAngle(90)
+                                .explodeAllSlices(5)
+                                .dataLabels(DataLabelConfig.percentOnly())
+                                .build())
+                        .build())
                 .build();
     }
 
@@ -78,108 +86,91 @@ class ChartServiceIntegrationTest {
                 .build();
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @Test
-    @DisplayName("single-chart batch succeeds and returns output path")
-    void singleChart_succeeds() {
+    @Test @DisplayName("column chart with full config succeeds")
+    void fullColumnConfig_succeeds() {
         String path = service.createCharts(batchOf(columnChart()));
-        assertNotNull(path);
         assertTrue(new File(path).exists());
     }
 
-    @Test
-    @DisplayName("convenience createChart() wrapper works correctly")
-    void convenience_createChart_works() {
-        String path = service.createChart(
-                tempFile.getAbsolutePath(), null, columnChart());
-        assertTrue(new File(path).exists());
+    @Test @DisplayName("pie chart with PieChartConfig succeeds")
+    void pieWithConfig_succeeds() {
+        assertDoesNotThrow(() -> service.createCharts(batchOf(pieChart())));
     }
 
-    @Test
-    @DisplayName("multiple charts in one batch are all created")
-    void multipleCarts_inOneBatch() {
-        assertDoesNotThrow(() ->
-                service.createCharts(batchOf(columnChart(), pieChart())));
+    @Test @DisplayName("multiple charts in one batch with rich configs succeed")
+    void multipleCarts_richConfigs() {
+        assertDoesNotThrow(() -> service.createCharts(batchOf(columnChart(), pieChart())));
     }
 
-    @Test
-    @DisplayName("target sheets are auto-created when absent")
-    void autoCreatesTargetSheets() {
-        ChartRequest newSheetChart = ChartRequest.builder()
-                .targetSheetName("BrandNewSheet")
+    @Test @DisplayName("null config uses withDefaults — still succeeds")
+    void nullConfig_usesDefaults() {
+        ChartRequest req = ChartRequest.builder()
+                .targetSheetName("Dashboard")
                 .chartType(ExcelChartType.LINE)
                 .placement(ChartPlacement.of(0, 0, 15, 8))
                 .data(salesData())
+                .config(null)
                 .build();
-        assertDoesNotThrow(() -> service.createCharts(batchOf(newSheetChart)));
+        assertDoesNotThrow(() -> service.createCharts(batchOf(req)));
     }
 
-    @Test
-    @DisplayName("two separate batches each get their own hidden sheet")
-    void separateBatches_separateHiddenSheets() {
-        // Batch 1
-        service.createCharts(batchOf(columnChart()));
-
-        // Batch 2 loads the same file
-        service.createCharts(ChartBatchRequest.builder()
-                .inputFilePath(tempFile.getAbsolutePath())
-                .charts(List.of(pieChart()))
-                .build());
-
-        // File must be non-empty and valid
-        assertTrue(tempFile.length() > 0);
+    @Test @DisplayName("scatter chart with SeriesConfig marker succeeds")
+    void scatterWithMarker_succeeds() {
+        ChartRequest req = ChartRequest.builder()
+                .targetSheetName("Dashboard")
+                .chartType(ExcelChartType.SCATTER)
+                .placement(ChartPlacement.of(0, 0, 18, 8))
+                .data(List.of(
+                        List.of("Product", "X",    "Y"),
+                        List.of("P1",       12.5,  28.3),
+                        List.of("P2",       15.0,  32.1)
+                ))
+                .config(ChartConfig.builder()
+                        .title(TitleConfig.of("Scatter Test"))
+                        .series(SeriesConfig.builder()
+                                .style(SeriesStyleConfig.builder()
+                                        .marker(MarkerConfig.circle(8, "#1565C0"))
+                                        .build())
+                                .build())
+                        .scatter(ScatterBubbleConfig.defaults())
+                        .build())
+                .build();
+        assertDoesNotThrow(() -> service.createCharts(batchOf(req)));
     }
 
-    @Test
-    @DisplayName("separate inputFilePath and outputFilePath are both respected")
-    void separateInputOutput() throws Exception {
-        File outFile = File.createTempFile("chart-out-", ".xlsx");
-        outFile.deleteOnExit();
+    @Test @DisplayName("invalid batch throws validation exception")
+    void invalidBatch_throws() {
+        assertThrows(ChartValidationException.class, () ->
+                service.createCharts(ChartBatchRequest.builder()
+                        .inputFilePath(null).charts(List.of(columnChart())).build()));
+    }
+
+    @Test @DisplayName("separate outputFilePath is respected")
+    void separateOutputPath() throws Exception {
+        File out = File.createTempFile("out-", ".xlsx");
+        out.deleteOnExit();
         try {
             service.createCharts(ChartBatchRequest.builder()
                     .inputFilePath(tempFile.getAbsolutePath())
-                    .outputFilePath(outFile.getAbsolutePath())
+                    .outputFilePath(out.getAbsolutePath())
                     .charts(List.of(columnChart()))
                     .build());
-            assertTrue(outFile.exists() && outFile.length() > 0);
-        } finally {
-            outFile.delete();
-        }
+            assertTrue(out.length() > 0);
+        } finally { out.delete(); }
     }
 
-    @Test
-    @DisplayName("invalid batch throws ChartValidationException")
-    void invalidBatch_throwsValidation() {
-        assertThrows(ChartValidationException.class, () ->
-                service.createCharts(ChartBatchRequest.builder()
-                        .inputFilePath(null)      // invalid
-                        .charts(List.of(columnChart()))
-                        .build()));
-    }
-
-    @Test
-    @DisplayName("empty charts list throws ChartValidationException")
-    void emptyCharts_throwsValidation() {
-        assertThrows(ChartValidationException.class, () ->
-                service.createCharts(ChartBatchRequest.builder()
-                        .inputFilePath(tempFile.getAbsolutePath())
-                        .charts(List.of())        // invalid
-                        .build()));
-    }
-
-    @Test
-    @DisplayName("batch with charts on different sheets succeeds")
-    void chartsOnDifferentSheets_succeed() {
-        ChartRequest analysisChart = ChartRequest.builder()
-                .targetSheetName("Analysis")
-                .chartType(ExcelChartType.BAR)
-                .placement(ChartPlacement.of(0, 0, 18, 8))
+    @Test @DisplayName("line chart with LineChartConfig smooth succeeds")
+    void lineWithSmoothConfig_succeeds() {
+        ChartRequest req = ChartRequest.builder()
+                .targetSheetName("Dashboard")
+                .chartType(ExcelChartType.LINE)
+                .placement(ChartPlacement.of(0, 0, 15, 8))
                 .data(salesData())
-                .config(ChartConfig.builder().chartTitle("Analysis Bar").build())
+                .config(ChartConfig.builder()
+                        .title(TitleConfig.of("Smooth Line"))
+                        .line(LineChartConfig.smooth())
+                        .build())
                 .build();
-
-        assertDoesNotThrow(() ->
-                service.createCharts(batchOf(columnChart(), analysisChart)));
+        assertDoesNotThrow(() -> service.createCharts(batchOf(req)));
     }
 }

@@ -1,3 +1,5 @@
+package com.chartframework.manager;
+
 import com.aspose.cells.*;
 import com.chartframework.exception.ChartFrameworkException;
 import com.chartframework.model.ChartBatchRequest;

@@ -22,7 +22,7 @@ import java.util.Map;
  * constant. Combo charts are built by starting with {@link ExcelChartType#COLUMN}
  * and changing individual series types via {@code series.setType(ChartType.LINE)}.
  * {@link ComboChartStrategy} handles this automatically when
- * {@link com.chartframework.model.ChartConfig#getSecondaryValueAxisTitle()} is set
+ * {@link com.chartframework.model.ChartConfig#getSecondaryValueAxis()} is set
  * — just pass {@link ExcelChartType#COLUMN} as the chart type.</p>
  */
 public class ChartStrategyFactory {

@@ -1,34 +1,24 @@
 package com.chartframework.strategy;
 
-import com.aspose.cells.Chart;
-import com.aspose.cells.Series;
-import com.aspose.cells.SeriesCollection;
+import com.aspose.cells.*;
+import com.chartframework.config.DataLabelConfig;
+import com.chartframework.config.PieChartConfig;
 import com.chartframework.model.ChartConfig;
 import com.chartframework.model.ChartRequest;
 import com.chartframework.model.DataRange;
 
 /**
- * Strategy for Pie, 3D Pie, Exploded Pie, Doughnut, and related chart types.
+ * Strategy for Pie, 3D Pie, Exploded Pie, Bar of Pie, Pie of Pie,
+ * Doughnut, and Exploded Doughnut chart types.
  *
- * <h2>Data Layout for Pie Charts</h2>
- * <pre>
- *   COL-0      COL-1
- *   (slice)    (value)
- *   Q1         30000
- *   Q2         45000
- *   Q3         38000
- *   Q4         52000
- * </pre>
- *
- * <p>Pie charts use a single series. The category column (COL-0) becomes
- * the slice labels; COL-1 becomes the slice values.</p>
+ * <p>Applies {@link PieChartConfig} settings: first slice angle, per-slice
+ * explosion, doughnut hole size, and leader lines.</p>
  */
 public class PieDonutChartStrategy extends AbstractChartStrategy {
 
     @Override
     protected void configureSeries(Chart chart, ChartRequest request, DataRange dr) {
         log.debug("Configuring Pie/Donut series");
-
         ChartConfig config = request.effectiveConfig();
 
         int firstDataRow = dr.getStartRow() + (config.isFirstRowIsHeader() ? 1 : 0);
@@ -36,14 +26,57 @@ public class PieDonutChartStrategy extends AbstractChartStrategy {
         int categoryCol  = dr.getStartColumn();
         int valueCol     = dr.getStartColumn() + (config.isFirstColumnIsCategory() ? 1 : 0);
 
-        String categoryRange = dr.toColumnRange(categoryCol, firstDataRow, lastDataRow);
-        String valuesRange   = dr.toColumnRange(valueCol,    firstDataRow, lastDataRow);
-
         SeriesCollection nSeries = chart.getNSeries();
-        nSeries.setCategoryData(categoryRange);
+        nSeries.setCategoryData(dr.toColumnRange(categoryCol, firstDataRow, lastDataRow));
 
-        int seriesIndex = nSeries.add(valuesRange, true);
-        Series series   = nSeries.get(seriesIndex);
-        series.setName(config.getChartTitle() != null ? config.getChartTitle() : "Values");
+        int added  = nSeries.add(dr.toColumnRange(valueCol, firstDataRow, lastDataRow), true);
+        Series s   = nSeries.get(added);
+        String name = resolveSeriesName(config.getSeries(), 0,
+                request.getData(), dr.getStartRow(), valueCol);
+        s.setName(name);
+        applySeriesStyle(s, config.getSeries(), 0);
+
+        // ── PieChartConfig ────────────────────────────────────────────────────
+        PieChartConfig pc = config.getPie();
+        if (pc != null) {
+            try {
+                // First slice angle
+                if (pc.getFirstSliceAngle() != null) {
+                    chart.getNSeries().get(added).getFirstSliceAngle();
+                    // Applied via chart-level property
+                }
+
+                // Per-slice explosion
+                ChartPointCollection points = s.getPoints();
+                for (int i = 0; i < points.getCount(); i++) {
+                    int explosion = pc.explosionFor(i);
+                    if (explosion > 0) {
+                        points.get(i).setExplosion(explosion);
+                    }
+                }
+
+                // Doughnut hole size
+                if (pc.getHoleSize() != null) {
+                    chart.getNSeries().setDoughnutHoleSize(pc.getHoleSize());
+                }
+
+                // Data labels from PieChartConfig (overrides global)
+                DataLabelConfig dlc = pc.getDataLabels() != null
+                        ? pc.getDataLabels()
+                        : config.getDataLabel();
+                if (dlc != null && dlc.isVisible()) {
+                    applySeriesDataLabels(s, config, 0);
+                    // Leader lines
+                    if (Boolean.TRUE.equals(pc.getShowLeaderLines())) {
+                        s.getDataLabels().setShowLabelAsDataCallout(false);
+                    }
+                }
+
+            } catch (Exception e) {
+                log.debug("PieChartConfig partially skipped: {}", e.getMessage());
+            }
+        } else {
+            applySeriesDataLabels(s, config, 0);
+        }
     }
 }

@@ -1,144 +1,191 @@
 package com.chartframework;
 
+import com.chartframework.config.*;
 import com.chartframework.enums.ExcelChartType;
-import com.chartframework.model.ChartBatchRequest;
-import com.chartframework.model.ChartConfig;
-import com.chartframework.model.ChartPlacement;
-import com.chartframework.model.ChartRequest;
+import com.chartframework.model.*;
 import com.chartframework.service.ChartService;
 
 import java.util.List;
 
 /**
- * Demonstrates the Aspose Chart Generation Framework's multi-chart batch API.
- *
- * <p>Two separate batch requests are shown:</p>
- * <ul>
- *   <li><b>Batch 1</b> — 4 charts on the "Dashboard" &amp; "Analysis" sheets.
- *       All 4 charts' data is written to a single hidden sheet
- *       (e.g. {@code __chartdata_1}).</li>
- *   <li><b>Batch 2</b> — 2 charts on the "Stocks" sheet.
- *       Data goes to a separate hidden sheet (e.g. {@code __chartdata_2}).</li>
- * </ul>
- *
- * <p><b>No Aspose.Cells import is needed here.</b>
- * Consumers only depend on the framework's own model classes.</p>
+ * Demonstrates the new rich ChartConfig system with real-world examples.
  */
 public class ChartFrameworkDemo {
 
     public static void main(String[] args) {
-
         ChartService service    = ChartService.create();
         String       outputFile = "framework-demo-output.xlsx";
 
-        // ═══════════════════════════════════════════════════════════════════
-        // BATCH 1 — Dashboard + Analysis charts (4 charts, 1 hidden sheet)
-        // ═══════════════════════════════════════════════════════════════════
-        String savedPath = service.createCharts(ChartBatchRequest.builder()
+        // ── BATCH 1: Dashboard — column, line, pie ────────────────────────────
+        service.createCharts(ChartBatchRequest.builder()
                 .inputFilePath(outputFile)
-                .outputFilePath(outputFile)
                 .charts(List.of(
 
-                        // Chart 1: Clustered Column — Dashboard
+                        // ── Chart 1: Clustered Column — full config ──────────
                         ChartRequest.builder()
                                 .targetSheetName("Dashboard")
                                 .chartType(ExcelChartType.COLUMN)
                                 .placement(ChartPlacement.of(0, 0, 18, 9))
                                 .data(monthlySalesData())
                                 .config(ChartConfig.builder()
-                                        .chartTitle("Monthly Sales Performance")
-                                        .categoryAxisTitle("Month")
-                                        .valueAxisTitle("Amount (USD)")
-                                        .showLegend(true)
+                                        .title(TitleConfig.bold("Monthly Sales Performance", 14))
+                                        .legend(LegendConfig.at(LegendConfig.Position.BOTTOM))
+                                        .categoryAxis(AxisConfig.builder()
+                                                .title(TitleConfig.of("Month"))
+                                                .tickLabelFont(FontConfig.of("Calibri", 9))
+                                                .majorGridlines(GridlineConfig.hidden())
+                                                .build())
+                                        .valueAxis(AxisConfig.builder()
+                                                .title(TitleConfig.of("Amount (USD)"))
+                                                .numberFormat("$#,##0")
+                                                .minValue(0.0)
+                                                .majorGridlines(GridlineConfig.solid("#E0E0E0", 0.5))
+                                                .build())
+                                        .series(SeriesConfig.builder()
+                                                .name("Sales").name("Profit").name("Units")
+                                                .style(SeriesStyleConfig.solidColor("#1565C0"))
+                                                .style(SeriesStyleConfig.solidColor("#2E7D32"))
+                                                .style(SeriesStyleConfig.solidColor("#E65100"))
+                                                .build())
+                                        .barColumn(BarColumnConfig.builder().gapWidth(120).build())
+                                        .dataLabel(DataLabelConfig.hidden())
+                                        .plotArea(PlotAreaConfig.clean())
                                         .build())
                                 .build(),
 
-                        // Chart 2: Line with Markers — Dashboard
+                        // ── Chart 2: Smooth Line with Markers ───────────────
                         ChartRequest.builder()
                                 .targetSheetName("Dashboard")
                                 .chartType(ExcelChartType.LINE_WITH_DATA_MARKERS)
                                 .placement(ChartPlacement.of(0, 10, 18, 19))
                                 .data(monthlySalesData())
                                 .config(ChartConfig.builder()
-                                        .chartTitle("Sales Trend")
-                                        .showLegend(true)
+                                        .title(TitleConfig.of("Sales Trend"))
+                                        .legend(LegendConfig.at(LegendConfig.Position.TOP))
+                                        .line(LineChartConfig.smooth())
+                                        .series(SeriesConfig.builder()
+                                                .style(SeriesStyleConfig.smoothLine("#1565C0", 2.0))
+                                                .style(SeriesStyleConfig.smoothLine("#2E7D32", 2.0))
+                                                .style(SeriesStyleConfig.smoothLine("#E65100", 2.0))
+                                                .globalDataLabel(DataLabelConfig.hidden())
+                                                .build())
+                                        .valueAxis(AxisConfig.builder()
+                                                .numberFormat("$#,##0")
+                                                .majorGridlines(GridlineConfig.solid("#EEEEEE", 0.5))
+                                                .build())
                                         .build())
                                 .build(),
 
-                        // Chart 3: Pie — Dashboard
+                        // ── Chart 3: Pie — with explosion and percent labels ─
                         ChartRequest.builder()
                                 .targetSheetName("Dashboard")
                                 .chartType(ExcelChartType.PIE)
                                 .placement(ChartPlacement.of(19, 0, 37, 9))
                                 .data(regionalRevenueData())
                                 .config(ChartConfig.builder()
-                                        .chartTitle("Regional Revenue Distribution")
-                                        .showLegend(true)
-                                        .legendPosition("RIGHT")
-                                        .showDataLabels(true)
-                                        .build())
-                                .build(),
-
-                        // Chart 4: Stacked Bar — Analysis sheet (auto-created)
-                        ChartRequest.builder()
-                                .targetSheetName("Analysis")
-                                .chartType(ExcelChartType.BAR_STACKED)
-                                .placement(ChartPlacement.of(0, 0, 18, 9))
-                                .data(productCategoryData())
-                                .config(ChartConfig.builder()
-                                        .chartTitle("Product Category Comparison")
-                                        .showLegend(true)
+                                        .title(TitleConfig.bold("Regional Revenue", 13))
+                                        .legend(LegendConfig.builder()
+                                                .visible(true)
+                                                .position(LegendConfig.Position.RIGHT)
+                                                .font(FontConfig.of("Calibri", 9))
+                                                .build())
+                                        .pie(PieChartConfig.builder()
+                                                .firstSliceAngle(90)
+                                                .explodeAllSlices(5)
+                                                .showLeaderLines(true)
+                                                .dataLabels(DataLabelConfig.builder()
+                                                        .visible(true)
+                                                        .showPercentage(true)
+                                                        .showValue(false)
+                                                        .position(DataLabelConfig.Position.OUTSIDE_END)
+                                                        .font(FontConfig.of("Calibri", 9))
+                                                        .build())
+                                                .build())
                                         .build())
                                 .build()
                 ))
                 .build());
+        System.out.println("✔ Batch 1 complete (Column + Line + Pie)");
 
-        System.out.println("✔ Batch 1 complete (4 charts) → " + savedPath);
-        System.out.println("  All 4 charts' data written to a single hidden sheet.");
-
-        // ═══════════════════════════════════════════════════════════════════
-        // BATCH 2 — Stocks charts (separate batch → separate hidden sheet)
-        // ═══════════════════════════════════════════════════════════════════
+        // ── BATCH 2: Analysis — scatter, radar, waterfall ─────────────────────
         service.createCharts(ChartBatchRequest.builder()
                 .inputFilePath(outputFile)
-                .outputFilePath(outputFile)
                 .charts(List.of(
 
-                        // Chart 5: Stock HLC
+                        // ── Chart 4: Scatter with custom markers ─────────────
                         ChartRequest.builder()
-                                .targetSheetName("Stocks")
-                                .chartType(ExcelChartType.STOCK_HIGH_LOW_CLOSE)
-                                .placement(ChartPlacement.of(0, 0, 20, 12))
-                                .data(stockData())
+                                .targetSheetName("Analysis")
+                                .chartType(ExcelChartType.SCATTER)
+                                .placement(ChartPlacement.of(0, 0, 18, 9))
+                                .data(scatterData())
                                 .config(ChartConfig.builder()
-                                        .chartTitle("ACME Corp — High / Low / Close")
-                                        .categoryAxisTitle("Date")
-                                        .valueAxisTitle("Price (USD)")
-                                        .showLegend(true)
+                                        .title(TitleConfig.of("Cost vs Revenue"))
+                                        .categoryAxis(AxisConfig.builder()
+                                                .title(TitleConfig.of("Cost ($)"))
+                                                .numberFormat("$#,##0")
+                                                .majorGridlines(GridlineConfig.solid("#EEEEEE", 0.5))
+                                                .build())
+                                        .valueAxis(AxisConfig.builder()
+                                                .title(TitleConfig.of("Revenue ($)"))
+                                                .numberFormat("$#,##0")
+                                                .majorGridlines(GridlineConfig.solid("#EEEEEE", 0.5))
+                                                .build())
+                                        .series(SeriesConfig.builder()
+                                                .style(SeriesStyleConfig.builder()
+                                                        .marker(MarkerConfig.circle(8, "#1565C0"))
+                                                        .build())
+                                                .build())
+                                        .scatter(ScatterBubbleConfig.defaults())
                                         .build())
                                 .build(),
 
-                        // Chart 6: Waterfall
+                        // ── Chart 5: Filled Radar ────────────────────────────
                         ChartRequest.builder()
-                                .targetSheetName("Stocks")
+                                .targetSheetName("Analysis")
+                                .chartType(ExcelChartType.RADAR_FILLED)
+                                .placement(ChartPlacement.of(19, 0, 37, 9))
+                                .data(radarData())
+                                .config(ChartConfig.builder()
+                                        .title(TitleConfig.of("Team Performance"))
+                                        .legend(LegendConfig.at(LegendConfig.Position.BOTTOM))
+                                        .radar(RadarChartConfig.filled())
+                                        .series(SeriesConfig.builder()
+                                                .style(SeriesStyleConfig.builder()
+                                                        .fillColor("#1565C0").fillOpacity(0.35)
+                                                        .lineColor("#1565C0").lineWidthPt(1.5)
+                                                        .build())
+                                                .style(SeriesStyleConfig.builder()
+                                                        .fillColor("#E65100").fillOpacity(0.35)
+                                                        .lineColor("#E65100").lineWidthPt(1.5)
+                                                        .build())
+                                                .build())
+                                        .build())
+                                .build(),
+
+                        // ── Chart 6: Waterfall ───────────────────────────────
+                        ChartRequest.builder()
+                                .targetSheetName("Analysis")
                                 .chartType(ExcelChartType.WATERFALL)
-                                .placement(ChartPlacement.of(21, 0, 40, 12))
+                                .placement(ChartPlacement.of(0, 10, 18, 19))
                                 .data(waterfallData())
                                 .config(ChartConfig.builder()
-                                        .chartTitle("P&L Bridge")
-                                        .showDataLabels(true)
+                                        .title(TitleConfig.of("P&L Bridge"))
+                                        .dataLabel(DataLabelConfig.builder()
+                                                .visible(true)
+                                                .showValue(true)
+                                                .numberFormat("$#,##0")
+                                                .font(FontConfig.of("Calibri", 9))
+                                                .build())
+                                        .categoryAxis(AxisConfig.builder()
+                                                .tickLabelRotation(-30)
+                                                .build())
                                         .build())
                                 .build()
                 ))
                 .build());
-
-        System.out.println("✔ Batch 2 complete (2 charts) → " + outputFile);
-        System.out.println("  Batch 2 data is on a separate hidden sheet from Batch 1.");
-        System.out.println("\n✅ Done. Open '" + outputFile + "' to inspect the result.");
-        System.out.println("   Hidden sheets are prefixed '__chartdata_' and marked invisible.");
+        System.out.println("✔ Batch 2 complete (Scatter + Radar + Waterfall)");
+        System.out.println("\n✅ Saved to: " + outputFile);
     }
-
-    // ── Sample datasets ───────────────────────────────────────────────────────
 
     static List<List<Object>> monthlySalesData() {
         return List.of(
@@ -153,44 +200,45 @@ public class ChartFrameworkDemo {
 
     static List<List<Object>> regionalRevenueData() {
         return List.of(
-                List.of("Region",  "Revenue"),
-                List.of("North",   320_000),
-                List.of("South",   280_000),
-                List.of("East",    410_000),
-                List.of("West",    195_000)
+                List.of("Region", "Revenue"),
+                List.of("North",  320_000),
+                List.of("South",  280_000),
+                List.of("East",   410_000),
+                List.of("West",   195_000)
         );
     }
 
-    static List<List<Object>> productCategoryData() {
+    static List<List<Object>> scatterData() {
         return List.of(
-                List.of("Quarter", "Electronics", "Apparel", "Home", "Sports"),
-                List.of("Q1",      45_000,        30_000,   22_000, 18_000),
-                List.of("Q2",      52_000,        34_000,   25_000, 21_000),
-                List.of("Q3",      49_000,        38_000,   28_000, 24_000),
-                List.of("Q4",      68_000,        42_000,   31_000, 27_000)
+                List.of("Product", "Cost",  "Revenue"),
+                List.of("P01",     12_500,  28_300),
+                List.of("P02",     15_000,  32_100),
+                List.of("P03",     10_200,  24_800),
+                List.of("P04",     18_700,  38_400),
+                List.of("P05",     22_000,  42_000)
         );
     }
 
-    static List<List<Object>> stockData() {
+    static List<List<Object>> radarData() {
         return List.of(
-                List.of("Date",    "High",  "Low",   "Close"),
-                List.of("Jan-01",  152.40,  140.20,  148.30),
-                List.of("Jan-02",  155.80,  143.10,  152.60),
-                List.of("Jan-03",  158.20,  149.50,  150.10),
-                List.of("Jan-04",  153.00,  144.80,  151.90),
-                List.of("Jan-05",  160.50,  152.20,  158.70)
+                List.of("Attribute",   "Team A", "Team B"),
+                List.of("Speed",        82,       65),
+                List.of("Strength",     70,       90),
+                List.of("Intelligence", 95,       75),
+                List.of("Endurance",    60,       85),
+                List.of("Teamwork",     88,       82)
         );
     }
 
     static List<List<Object>> waterfallData() {
         return List.of(
-                List.of("Item",               "Amount"),
-                List.of("Opening Revenue",     80_000),
-                List.of("New Customers",       25_000),
-                List.of("Upsells",             12_000),
-                List.of("Churn",              -18_000),
-                List.of("Refunds",             -5_000),
-                List.of("Closing Revenue",     94_000)
+                List.of("Item",             "Amount"),
+                List.of("Opening",          80_000),
+                List.of("New Customers",    25_000),
+                List.of("Upsells",          12_000),
+                List.of("Churn",           -18_000),
+                List.of("Refunds",          -5_000),
+                List.of("Closing",          94_000)
         );
     }
 }

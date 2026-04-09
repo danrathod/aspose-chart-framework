@@ -51,6 +51,6 @@ public class MapChartStrategy extends AbstractChartStrategy {
         String valuesRange = dr.toColumnRange(valueCol, firstDataRow, lastDataRow);
         int idx = nSeries.add(valuesRange, true);
         Series series = nSeries.get(idx);
-        series.setName(config.getValueAxisTitle() != null ? config.getValueAxisTitle() : "Value");
+        series.setName(config.getValueAxis() != null && config.getValueAxis().getTitle() != null ? config.getValueAxis().getTitle().getText() : "Value");
     }
 }
